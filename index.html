@@ -148,73 +148,26 @@ table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric
 
   <!-- ── 수요판단 ─────────────────────────────── -->
   <div class="panel" id="p-demand">
-    <p class="sub" style="margin-top:-8px">제품 키워드를 넣으면 검색량과 경쟁강도를 자동으로 채우고, 6개 항목 100점 기준으로 등급을 매깁니다.</p>
+    <p class="sub" style="margin-top:-8px">제품 키워드 하나만 넣으면 나머지는 전부 자동으로 수집·계산해 등급을 매깁니다.</p>
 
-    <div class="grid2">
-      <div class="field">
-        <label for="dname">제품명</label>
-        <input type="text" id="dname" placeholder="예: 신발 탈취제" maxlength="40">
-      </div>
-      <div class="field">
-        <label for="dkw">핵심 키워드</label>
-        <input type="text" id="dkw" placeholder="예: 신발 탈취제" maxlength="30">
-      </div>
+    <div class="field">
+      <label for="dkw">제품 키워드</label>
+      <input type="text" id="dkw" placeholder="예: 신발 탈취제" maxlength="30">
     </div>
     <button class="go" id="dgo">분석</button>
 
     <div id="dbody" style="display:none">
-      <div class="sec">자동 수집</div>
-      <div class="grid2">
-        <div class="field">
-          <label>핵심 월검색량 <span class="hint">PC+모바일</span></label>
-          <input type="number" id="dvol" class="auto" min="0">
-        </div>
-        <div class="field">
-          <label for="dtrend">12개월 검색 증감률 <span class="hint">%</span></label>
-          <input type="number" id="dtrend" step="0.1" placeholder="예: 18">
-        </div>
-      </div>
+      <div id="dverdict"></div>
 
-      <div class="sec">문제형 연관 키워드 <span class="hint" style="font-weight:400">체크한 것만 합산됩니다</span></div>
+      <div class="sec">자동 수집한 값</div>
+      <div id="dfacts"></div>
+
+      <div class="sec">문제형 연관 키워드 <span class="hint" style="font-weight:400">연관 수요 점수에 합산됩니다</span></div>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 8px" id="drelnote"></p>
       <div class="rel" id="drel"></div>
       <div class="relsum"><span>합산 검색량</span><b id="drelsum">0</b></div>
 
-      <div class="sec">직접 판단</div>
-      <div class="grid2">
-        <div class="field">
-          <label for="dintent">구매의도</label>
-          <select id="dintent">
-            <option value="5">정보성 검색 위주</option>
-            <option value="10" selected>문제 해결형</option>
-            <option value="15">제품명/구매형</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="dcomp">경쟁강도</label>
-          <select id="dcomp">
-            <option value="0">대기업·브랜드 장악</option>
-            <option value="5">경쟁 매우 높음</option>
-            <option value="10" selected>경쟁 보통</option>
-            <option value="15">경쟁 약함</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="dproof">판매 증거</label>
-          <select id="dproof">
-            <option value="0">판매 흔적 적음</option>
-            <option value="5">일부 상품 판매됨</option>
-            <option value="10" selected>다수 상품 리뷰 누적</option>
-            <option value="15">상위제품 판매량 매우 높음</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="drivals">경쟁 상품수 <span class="hint">스마트스토어 검색결과</span></label>
-          <input type="number" id="drivals" min="0" placeholder="예: 5000">
-        </div>
-      </div>
-
-      <div id="dverdict"></div>
-      <button class="ghost" id="dsave" style="margin-top:16px">이 제품 목록에 저장</button>
+      <button class="ghost" id="dsave" style="margin-top:16px">이 키워드 목록에 저장</button>
     </div>
 
     <div id="dlist"></div>
@@ -295,14 +248,20 @@ $('go').addEventListener('click', run);
 $('q').addEventListener('keydown', e => { if(e.key==='Enter') run(); });
 
 /* ───────── 수요판단 ───────── */
-const PROBLEM = ['방법','없애','제거','해결','추천','후기','비교','원인','효과','순위','고르','고민','냄새','대처','예방','관리','세척','정리','대체'];
-const COMP_MAP = {'높음':'5','중간':'10','낮음':'15'};
+// 문제 해결 의도가 뚜렷한 표현만. 단순 '추천/후기'는 탐색형이라 제외했습니다.
+const PROBLEM = ['방법','없애','제거','해결','원인','안될','고장','심할','너무','대처','예방','완화','줄이','막는','왜'];
+// 구매 직전 단계에서 쓰는 표현. 이 비중이 높을수록 상업적 가치가 큽니다.
+const BUY = ['가격','최저가','추천','후기','순위','구매','파는곳','저렴','판매','리뷰','비교','브랜드','직구'];
+const COMP_SCORE = {'높음':5,'중간':10,'낮음':15};
 const SCALES = {
-  vol:  [[30000,20],[10000,15],[3000,10],[0,5]],
-  rel:  [[50000,20],[20000,15],[5000,10],[0,5]],
-  trend:[[30,15],[10,10],[0,5],[-Infinity,0]]
+  vol:   [[30000,25],[10000,19],[3000,12],[0,6]],
+  rel:   [[50000,20],[20000,15],[5000,10],[0,5]],
+  buy:   [[0.40,15],[0.25,11],[0.12,7],[0,3]],
+  depth: [[15,0],[11,2],[7,5],[3,8],[0,10]],
+  trend: [[30,15],[10,11],[0,6],[-Infinity,0]]
 };
 const pick = (scale, v) => (scale.find(([t]) => v >= t) || [0,0])[1];
+let facts = null;
 const GRADES = [
   [80,'A','최우선 검토','바로 제품기획·원가·샘플 검토','var(--gA)'],
   [65,'B','유망','테스트 생산 / 시장조사','var(--gB)'],
@@ -311,55 +270,74 @@ const GRADES = [
 ];
 let related = [];
 
-function relSum(){
-  return Array.from(document.querySelectorAll('#drel input:checked'))
-    .reduce((a,el) => a + Number(el.dataset.total), 0);
-}
 function score(){
-  const vol = Number($('dvol').value)||0, rsum = relSum(), tr = Number($('dtrend').value)||0;
+  if(!facts) return null;
   const parts = [
-    ['핵심 검색량', pick(SCALES.vol, vol), 20],
-    ['연관 수요',   pick(SCALES.rel, rsum), 20],
-    ['검색 추세',   pick(SCALES.trend, tr), 15],
-    ['구매의도',    Number($('dintent').value), 15],
-    ['경쟁강도',    Number($('dcomp').value), 15],
-    ['판매증거',    Number($('dproof').value), 15]
+    ['핵심 검색량', pick(SCALES.vol, facts.vol), 25, fmt(facts.vol)+'회'],
+    ['연관 수요',   pick(SCALES.rel, facts.relSum), 20, fmt(facts.relSum)+'회 · '+facts.relCount+'개'],
+    ['구매의도',    pick(SCALES.buy, facts.buyRatio), 15, '구매형 '+Math.round(facts.buyRatio*100)+'%'],
+    ['경쟁강도',    COMP_SCORE[facts.comp] ?? 10, 15, '경쟁 '+facts.comp],
+    ['광고 포화도', pick(SCALES.depth, facts.depth), 10, '광고 '+facts.depth+'개']
   ];
-  const total = parts.reduce((a,p) => a+p[1], 0);
-  const g = GRADES.find(([t]) => total >= t);
-  const rivals = Number($('drivals').value)||0;
-  return {parts, total, grade:g, rsum, opportunity: rivals ? rsum/rivals : null};
+  if(facts.trend !== null){
+    parts.push(['검색 추세', pick(SCALES.trend, facts.trend), 15,
+                (facts.trend>0?'+':'')+facts.trend.toFixed(1)+'%']);
+  }
+  const raw = parts.reduce((a,p) => a+p[1], 0);
+  const max = parts.reduce((a,p) => a+p[2], 0);
+  const total = Math.round(raw / max * 100);
+  return {parts, total, max, grade: GRADES.find(([t]) => total >= t)};
 }
+
 function renderVerdict(){
-  const r = score(), [,letter,label,action,color] = r.grade;
+  const r = score();
+  if(!r) return;
+  const [,letter,label,action,color] = r.grade;
   $('dverdict').innerHTML =
     '<div class="verdict"><div class="vhead">'
     + '<div class="badge" style="background:'+color+'">'+letter+'</div>'
     + '<div class="vscore">'+r.total+'<span> / 100</span></div>'
     + '<div class="vtext">'+esc(label)+'<em>'+esc(action)+'</em></div></div>'
     + '<div class="bd">'
-    + r.parts.map(([l,s,m]) =>
-        '<div><span class="l">'+l+'</span><span class="m"><i style="width:'+(s/m*100)+'%"></i></span>'
-        + '<span class="s">'+s+'/'+m+'</span></div>').join('')
-    + (r.opportunity !== null ? '<div style="margin-top:6px"><span class="l">시장기회지수</span>'
-        + '<span class="m"></span><span class="s">'+r.opportunity.toFixed(1)+'</span></div>' : '')
-    + '</div></div>';
+    + r.parts.map(([l,sc,m,dt]) =>
+        '<div><span class="l">'+l+'</span><span class="m"><i style="width:'+(sc/m*100)+'%"></i></span>'
+        + '<span class="s">'+sc+'/'+m+'</span></div>'
+        + '<div style="font-size:11px;color:var(--muted);margin:-2px 0 6px 0">'+esc(dt)+'</div>').join('')
+    + '</div>'
+    + (facts.trend === null
+        ? '<p style="font-size:12px;color:var(--muted);margin:10px 0 0">검색 추세는 데이터랩 연동 전이라 제외하고 '
+          + r.max + '점 만점을 100점으로 환산했습니다.</p>' : '')
+    + '</div>';
 }
+
+function renderFacts(){
+  const f = facts;
+  $('dfacts').innerHTML = '<div class="grid2">'
+    + [['월 검색량', fmt(f.vol)+'회'],
+       ['PC / 모바일', fmt(f.pc)+' / '+fmt(f.mobile)+'  (모바일 '+Math.round(f.mobile/f.vol*100)+'%)'],
+       ['경쟁강도', f.comp],
+       ['평균 노출 광고수', f.depth+'개'],
+       ['연관 키워드', f.totalRel+'개 (문제형 '+f.relCount+'개)'],
+       ['검색 추세', f.trend === null ? '데이터 없음' : (f.trend>0?'+':'')+f.trend.toFixed(1)+'%']
+      ].map(([k,v]) => '<div class="field"><label>'+k+'</label>'
+        + '<div style="font-size:15px;padding:2px 0">'+esc(v)+'</div></div>').join('')
+    + '</div>';
+}
+
 function renderRel(){
   if(!related.length){
-    $('drel').innerHTML = '<p style="padding:14px;color:var(--muted);font-size:14px;margin:0">연관 키워드가 없습니다.</p>';
-    $('drelsum').textContent = '0'; return;
+    $('drel').innerHTML = '<p style="padding:14px;color:var(--muted);font-size:14px;margin:0">문제형 연관 키워드가 없습니다.</p>';
+    $('drelsum').textContent = '0';
+    $('drelnote').textContent = '';
+    return;
   }
-  $('drel').innerHTML = related.map((r,i) =>
-    '<label><input type="checkbox" data-total="'+r.total+'"'+(r.problem?' checked':'')+'>'
-    + '<span>'+esc(r.keyword)+'</span><span class="n">'+fmt(r.total)+'</span></label>').join('');
-  document.querySelectorAll('#drel input').forEach(el => el.addEventListener('change', () => {
-    $('drelsum').textContent = fmt(relSum()); renderVerdict();
-  }));
-  $('drelsum').textContent = fmt(relSum());
+  $('drel').innerHTML = related.map(r =>
+    '<label style="cursor:default"><span>'+esc(r.keyword)+'</span>'
+    + '<span class="n">'+fmt(r.total)+'</span></label>').join('');
+  $('drelsum').textContent = fmt(facts.relSum);
+  $('drelnote').textContent = '연관 키워드 '+facts.totalRel+'개 중 문제 해결 의도가 보이는 '
+    + related.length+'개입니다.';
 }
-['dvol','dtrend','dintent','dcomp','dproof','drivals'].forEach(id =>
-  document.addEventListener('input', e => { if(e.target.id === id) renderVerdict(); }));
 
 async function analyze(){
   const kw = $('dkw').value.trim();
@@ -372,22 +350,31 @@ async function analyze(){
     const core = d.rows.find(r => norm(r.keyword) === norm(kw)) || d.rows[0];
     if(!core){ alert('검색량 데이터가 없는 키워드입니다.'); return; }
 
-    $('dvol').value = core.total;
-    if(COMP_MAP[core.comp]) $('dcomp').value = COMP_MAP[core.comp];
-    if(!$('dname').value.trim()) $('dname').value = kw;
+    const rest = d.rows.filter(r => norm(r.keyword) !== norm(core.keyword));
+    related = rest.filter(r => PROBLEM.some(p => r.keyword.includes(p)))
+                  .sort((a,b) => b.total - a.total);
+    const buySum = rest.filter(r => BUY.some(b => r.keyword.includes(b)))
+                       .reduce((a,r) => a + r.total, 0);
+    const restSum = rest.reduce((a,r) => a + r.total, 0);
 
-    related = d.rows.filter(r => norm(r.keyword) !== norm(core.keyword))
-      .map(r => ({keyword:r.keyword, total:r.total,
-                  problem: PROBLEM.some(p => r.keyword.includes(p))}))
-      .sort((a,b) => (b.problem-a.problem) || (b.total-a.total)).slice(0, 60);
-
+    let trend = null;
     const t = (d.trends||{})[core.keyword];
-    if(t && t.length > 1){
-      const first = t[0].estimate, last = t[t.length-1].estimate;
-      if(first > 0) $('dtrend').value = ((last-first)/first*100).toFixed(1);
+    if(t && t.length > 1 && t[0].estimate > 0){
+      trend = (t[t.length-1].estimate - t[0].estimate) / t[0].estimate * 100;
     }
+
+    facts = {
+      vol: core.total, pc: core.pc, mobile: core.mobile,
+      comp: core.comp, depth: core.depth,
+      relSum: related.reduce((a,r) => a + r.total, 0),
+      relCount: related.length, totalRel: rest.length,
+      buyRatio: restSum ? buySum / restSum : 0,
+      trend
+    };
+
     $('dbody').style.display = 'block';
-    renderRel(); renderVerdict();
+    renderVerdict(); renderFacts(); renderRel();
+    $('dverdict').scrollIntoView({behavior:'smooth', block:'nearest'});
   }catch(e){ alert('연결에 실패했습니다. 잠시 뒤 다시 시도해 주세요.'); }
   finally{ $('dgo').disabled = false; $('dgo').textContent = '분석'; }
 }
@@ -404,11 +391,11 @@ function renderList(){
   const avg = (list.reduce((a,x)=>a+x.total,0)/list.length).toFixed(1);
   const ab = list.filter(x => x.grade === 'A' || x.grade === 'B').length;
   $('dlist').innerHTML = '<div class="sec">저장한 제품 '+list.length+'개 · 평균 '+avg+'점 · A/B등급 '+ab+'개</div>'
-    + '<table class="saved"><thead><tr><th>제품</th><th>키워드</th><th style="text-align:right">검색량</th>'
+    + '<table class="saved"><thead><tr><th>키워드</th><th style="text-align:right">검색량</th>'
     + '<th style="text-align:right">점수</th><th>등급</th><th></th></tr></thead><tbody>'
     + list.map((x,i) => {
         const c = (GRADES.find(g => g[1] === x.grade)||[])[4] || 'var(--gD)';
-        return '<tr><td>'+esc(x.name)+'</td><td style="color:var(--muted)">'+esc(x.keyword)+'</td>'
+        return '<tr><td>'+esc(x.keyword)+'</td>'
           + '<td class="num">'+fmt(x.vol)+'</td><td class="num">'+x.total+'</td>'
           + '<td><span class="gtag" style="background:'+c+'">'+x.grade+'</span></td>'
           + '<td style="text-align:right"><button class="del" data-i="'+i+'" title="삭제">×</button></td></tr>';
@@ -419,13 +406,14 @@ function renderList(){
 }
 $('dsave').addEventListener('click', () => {
   const r = score();
+  if(!r) return;
   const list = load();
-  list.unshift({name: $('dname').value.trim() || $('dkw').value.trim(),
-                keyword: $('dkw').value.trim(), vol: Number($('dvol').value)||0,
+  list.unshift({keyword: $('dkw').value.trim(), vol: facts.vol,
                 total: r.total, grade: r.grade[1]});
   save(list.slice(0, 100)); renderList();
 });
 renderList();
+
 </script>
 </body>
 </html>
