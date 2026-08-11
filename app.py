@@ -88,7 +88,7 @@ def init_db():
 def cache_get(key):
     if key.startswith("TREND:"):
         ttl = TREND_TTL
-    elif key.startswith("UNMET:"):
+    elif key.startswith("UNMET"):
         ttl = SEARCH_TTL
     else:
         ttl = CACHE_TTL
@@ -370,25 +370,32 @@ def trend_for(keyword, total):
 SEARCH_SOURCES = [("kin", "지식iN"), ("cafearticle", "카페"), ("blog", "블로그")]
 SEARCH_TTL = int(os.getenv("SEARCH_TTL", 259200))   # 3일
 
-# 생활용품에서 반복되는 불만 축. 각 축마다 실제로 쓰이는 표현을 모았다.
+# 생활용품에서 반복되는 불만 축.
+# query: 네이버에 실제로 던질 검색어 (키워드 + 불만 표현)
+# words: 결과 글이 진짜 그 불만인지 확인하는 표현
 COMPLAINT_AXES = [
-    ("효과 없음",   ["효과가 없", "효과없", "소용없", "그대로", "안없어", "안 없어", "여전",
-                     "변화가 없", "차이가 없", "별로 안", "안 되네", "안되네"]),
-    ("금방 돌아옴", ["다시 나", "또 나", "금방", "하루 만", "며칠 만", "잠깐", "일시적",
-                     "얼마 안 가", "지속", "오래 안"]),
-    ("근본 원인",   ["근본", "원인", "왜 그런", "왜 자꾸", "재발", "반복"]),
-    ("성분 걱정",   ["성분", "유해", "독성", "아기", "임산부", "반려", "알레르기", "피부",
-                     "화학", "무해", "친환경", "냄새가 독"]),
-    ("사용 번거로움", ["번거", "귀찮", "매번", "일일이", "손이 많이", "불편", "오래 걸"]),
-    ("가격 부담",   ["비싸", "가성비", "돈만", "아깝", "낭비"]),
+    {"name": "효과 없음",
+     "queries": ["효과 없", "소용없", "그대로"],
+     "words": ["효과가 없", "효과없", "소용없", "그대로", "안없어", "안 없어", "여전",
+               "변화가 없", "차이가 없", "안 되네", "안되네", "실패"]},
+    {"name": "금방 돌아옴",
+     "queries": ["다시 냄새", "금방 다시", "며칠 만에"],
+     "words": ["다시 나", "또 나", "금방", "하루 만", "며칠 만", "잠깐", "일시적",
+               "얼마 안 가", "오래 안", "지속이 안"]},
+    {"name": "근본 원인",
+     "queries": ["근본 원인", "왜 자꾸", "계속 재발"],
+     "words": ["근본", "원인", "왜 그런", "왜 자꾸", "재발", "반복", "계속"]},
+    {"name": "성분 걱정",
+     "queries": ["성분 안전", "아기 있는데", "유해 성분"],
+     "words": ["유해", "독성", "아기", "아이", "임산부", "반려", "강아지", "고양이",
+               "알레르기", "피부", "화학", "무해", "친환경", "안전한지", "괜찮을까"]},
+    {"name": "사용 번거로움",
+     "queries": ["번거롭", "귀찮"],
+     "words": ["번거", "귀찮", "매번", "일일이", "손이 많이", "불편", "오래 걸"]},
+    {"name": "가격 부담",
+     "queries": ["비싸", "가성비"],
+     "words": ["비싸", "가성비", "돈만", "아깝", "낭비", "부담"]},
 ]
-# 시판 제품이 못 채워서 사람들이 직접 만들어 쓰는 신호
-DIY_WORDS = ["베이킹소다", "식초", "신문지", "숯", "커피", "녹차", "소금", "직접 만들",
-             "만들어 쓰", "집에서", "홈메이드", "대용"]
-# 질문이 아직 안 풀렸다는 신호
-UNSOLVED_WORDS = ["방법 없", "어떻게 해야", "도와주", "알려주세요", "해결 방법",
-                  "다들 어떻게", "추천 좀", "고민", "제발"]
-
 TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -426,141 +433,98 @@ def search_docs(source, query, display=100):
 
 
 def analyze_complaints(keyword):
-    """키워드 주변 글에서 어떤 불만이 안 풀렸는지 센다."""
+    """축마다 '키워드 + 불만 표현'으로 검색해, 그 불만이 실제로 담긴 글만 센다."""
     if not all(datalab_credentials()):
         return None
 
-    key = "UNMET:" + normalize(keyword).upper()
+    key = "UNMET2:" + normalize(keyword).upper()
     cached = cache_get(key)
     if cached:
         return cached
-    if not upstream_allowed(len(SEARCH_SOURCES)):
+
+    # 축별 질의 1회 + 카페 1회 + 시장 파악용 1회
+    need = len(COMPLAINT_AXES) + 2
+    if not upstream_allowed(need):
         raise RuntimeError("오늘 조회 한도를 모두 썼습니다. 내일 다시 이용해 주세요.")
 
-    docs, totals = [], {}
-    for source, label in SEARCH_SOURCES:
+    seen_links, axes, totals = set(), [], {}
+
+    def collect(source, label, query, limit=30):
         try:
-            found, total = search_docs(source, keyword)
+            found, total = search_docs(source, query, display=limit)
         except requests.RequestException:
-            continue
-        totals[label] = total
+            return [], 0
         for d in found:
             d["source"] = label
-            docs.append(d)
+        return found, total
 
-    if not docs:
-        return None
-
-    axes = []
-    for name, words in COMPLAINT_AXES:
+    # 축마다 질의 1회. 표현을 나열해 한 번에 던지고 확인은 words 로 한다.
+    for axis in COMPLAINT_AXES:
         hits = []
-        for d in docs:
+        query = "{} {}".format(keyword, " ".join(axis["queries"]))
+        matched_docs, _ = collect("kin", "지식iN", query, limit=50)
+
+        for d in matched_docs:
+            if d["link"] in seen_links:
+                continue
             blob = d["title"] + " " + d["text"]
-            matched = [w for w in words if w in blob]
-            if matched:
-                hits.append({"source": d["source"], "title": d["title"],
-                             "link": d["link"], "matched": matched[0]})
-        axes.append({"name": name, "count": len(hits), "samples": hits[:4]})
+            # 검색으로 걸러진 뒤에도 표현이 실제로 들어있는지 다시 확인한다
+            hit = next((w for w in axis["words"] if w in blob), None)
+            if not hit:
+                continue
+            seen_links.add(d["link"])
+            hits.append({"source": d["source"], "title": d["title"],
+                         "link": d["link"], "matched": hit})
+        axes.append({"name": axis["name"], "count": len(hits), "samples": hits[:5],
+                     "_axis": axis})
+
     axes.sort(key=lambda a: a["count"], reverse=True)
 
-    def count_any(words):
-        return sum(1 for d in docs if any(w in d["title"] + " " + d["text"] for w in words))
+    # 상위 2개 축만 카페까지 추가로 훑어 근거를 보강한다
+    for entry in axes[:2]:
+        axis = entry["_axis"]
+        query = "{} {}".format(keyword, " ".join(axis["queries"]))
+        more, _ = collect("cafearticle", "카페", query, limit=50)
+        for d in more:
+            if d["link"] in seen_links:
+                continue
+            blob = d["title"] + " " + d["text"]
+            hit = next((w for w in axis["words"] if w in blob), None)
+            if not hit:
+                continue
+            seen_links.add(d["link"])
+            entry["count"] += 1
+            if len(entry["samples"]) < 5:
+                entry["samples"].append({"source": d["source"], "title": d["title"],
+                                         "link": d["link"], "matched": hit})
+    axes.sort(key=lambda a: a["count"], reverse=True)
+    for entry in axes:
+        entry.pop("_axis", None)
 
-    diy = count_any(DIY_WORDS)
-    unsolved = count_any(UNSOLVED_WORDS)
+    # 시장 규모 파악용 (불만 표현 없는 순수 검색)
+    base, base_total = collect("kin", "지식iN", keyword, limit=100)
+    totals["지식iN"] = base_total
+    diy = sum(1 for d in base if any(w in d["title"] + " " + d["text"] for w in DIY_WORDS))
+    unsolved = sum(1 for d in base
+                   if any(w in d["title"] + " " + d["text"] for w in UNSOLVED_WORDS))
+
+    total_hits = sum(a["count"] for a in axes)
+    if not total_hits and not base:
+        return None
 
     result = {
         "keyword": keyword,
-        "doc_count": len(docs),
+        "doc_count": len(seen_links),
+        "base_count": len(base),
         "totals": totals,
         "axes": axes,
         "diy": diy,
         "unsolved": unsolved,
-        "diy_ratio": round(diy / len(docs) * 100),
-        "unsolved_ratio": round(unsolved / len(docs) * 100),
+        "diy_ratio": round(diy / len(base) * 100) if base else 0,
+        "unsolved_ratio": round(unsolved / len(base) * 100) if base else 0,
     }
     cache_put(key, result)
     return result
-
-
-# ------------------------------------------------------------------ 빈틈 키워드
-# 문제 해결 의도가 뚜렷한 표현. 단순 '추천/후기'는 탐색형이라 제외한다.
-PROBLEM_WORDS = [
-    "방법", "없애", "제거", "해결", "원인", "안될", "안돼", "고장", "심할", "너무",
-    "대처", "예방", "완화", "줄이", "막는", "왜", "안나", "실패", "부작용", "차이",
-    "대신", "직접", "셀프", "잘못", "문제",
-]
-GAP_MAX_SEED = 3          # 2차 확장에 쓸 씨앗 키워드 수
-GAP_MIN_VOLUME = 100      # 이보다 적으면 노이즈로 본다
-
-
-def is_problem(keyword):
-    return any(w in keyword for w in PROBLEM_WORDS)
-
-
-def gap_score(row):
-    """수요는 있는데 아무도 안 붙은 정도. 0~100."""
-    import math
-    # 수요 (0~40): 100회=0, 10000회=40
-    demand = 40 * min(1.0, math.log10(max(row["total"], 100) / 100) / 2)
-    # 미개척 (0~35): 광고가 적을수록 높다
-    unserved = 35 * max(0.0, 1 - row["depth"] / 10)
-    # 진입 여지 (0~15): 경쟁강도
-    entry = {"낮음": 15, "중간": 8, "높음": 2}.get(row["comp"], 8)
-    # 문제형 표현 (0~10)
-    problem = 10 if is_problem(row["keyword"]) else 0
-    return round(demand + unserved + entry + problem)
-
-
-def find_gaps(keyword, expand=True):
-    """레드오션 키워드에서 아직 안 풀린 지점을 뽑는다."""
-    rows, _ = lookup(keyword)
-    norm = normalize(keyword).upper()
-    core = next((r for r in rows if normalize(r["keyword"]).upper() == norm), None)
-    if not core:
-        return None
-
-    pool = {}
-    for r in rows:
-        if normalize(r["keyword"]).upper() != norm and r["total"] >= GAP_MIN_VOLUME:
-            pool[r["keyword"]] = r
-
-    # 1차에서 유망한 문제형 키워드를 씨앗으로 2차 확장
-    seeds = []
-    if expand:
-        cands = [r for r in pool.values() if is_problem(r["keyword"])]
-        cands.sort(key=gap_score, reverse=True)
-        for r in cands[:GAP_MAX_SEED]:
-            try:
-                more, _ = lookup(r["keyword"])
-            except (RuntimeError, requests.RequestException):
-                break
-            seeds.append(r["keyword"])
-            for m in more:
-                if m["total"] >= GAP_MIN_VOLUME and m["keyword"] not in pool \
-                        and normalize(m["keyword"]).upper() != norm:
-                    pool[m["keyword"]] = m
-
-    gaps = []
-    for r in pool.values():
-        gaps.append({
-            "keyword": r["keyword"], "total": r["total"],
-            "comp": r["comp"], "depth": r["depth"],
-            "problem": is_problem(r["keyword"]),
-            "score": gap_score(r),
-        })
-    gaps.sort(key=lambda g: g["score"], reverse=True)
-
-    unserved = [g for g in gaps if g["depth"] <= 2 and g["comp"] != "높음"]
-
-    return {
-        "core": {"keyword": core["keyword"], "total": core["total"],
-                 "comp": core["comp"], "depth": core["depth"]},
-        "seeds": seeds,
-        "scanned": len(pool),
-        "gaps": gaps[:40],
-        "unserved_count": len(unserved),
-    }
 
 
 # ------------------------------------------------------------------ 라우트
@@ -650,30 +614,6 @@ def api_search():
     if trend_error:
         payload["trend_error"] = trend_error
     return jsonify(payload)
-
-
-@app.post("/api/gaps")
-def api_gaps():
-    if not all(credentials()):
-        return jsonify({"error": "서버가 아직 설정되지 않았습니다. 운영자에게 알려주세요."}), 503
-    if rate_limited(client_ip()):
-        return jsonify({"error": "잠시 뒤에 다시 시도해 주세요. 짧은 시간에 너무 많이 요청했습니다."}), 429
-
-    body = request.get_json(silent=True) or {}
-    keyword = str(body.get("keyword", "")).strip()[:MAX_KEYWORD_LEN]
-    if not keyword:
-        return jsonify({"error": "키워드를 입력해 주세요."}), 400
-
-    try:
-        result = find_gaps(keyword, expand=bool(body.get("expand", True)))
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 429
-    except requests.RequestException:
-        return jsonify({"error": "네이버 서버와 통신하지 못했습니다. 잠시 뒤 다시 시도해 주세요."}), 502
-
-    if not result:
-        return jsonify({"error": "검색량 데이터가 없는 키워드입니다. 철자를 확인해 주세요."}), 404
-    return jsonify(result)
 
 
 @app.post("/api/unmet")
