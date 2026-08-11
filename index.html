@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>키워드 검색량 조회</title>
+<meta name="description" content="네이버 키워드의 월간 PC·모바일 검색량을 조회합니다.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/600.css">
+<style>
+:root{
+  --paper:#F6F6F3; --card:#FFF; --ink:#15171B; --muted:#71757E;
+  --line:#E4E4DE; --pc:#3B5BDB; --mobile:#0FA36B; --warn:#B4442B;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:880px;margin:0 auto;padding:56px 20px 96px}
+.eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 14px}
+h1{font-size:clamp(28px,6vw,42px);line-height:1.15;letter-spacing:-.03em;margin:0 0 10px;font-weight:800}
+.sub{color:var(--muted);font-size:15px;margin:0 0 32px;line-height:1.65}
+
+.bar{display:flex;gap:10px;flex-wrap:wrap}
+input[type=text]{
+  flex:1 1 300px;min-width:0;padding:16px 18px;font-size:17px;font-family:inherit;color:var(--ink);
+  background:var(--card);border:1.5px solid var(--line);border-radius:10px;
+  transition:border-color .15s,box-shadow .15s;
+}
+input[type=text]:focus{outline:none;border-color:var(--pc);box-shadow:0 0 0 3px rgba(59,91,219,.14)}
+button{
+  padding:16px 28px;font-size:16px;font-weight:700;font-family:inherit;color:#fff;
+  background:var(--ink);border:0;border-radius:10px;cursor:pointer;transition:opacity .15s;
+}
+button:hover{opacity:.85}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible,input:focus-visible{outline:2px solid var(--pc);outline-offset:2px}
+
+.opts{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14px;color:var(--muted)}
+.opts input{accent-color:var(--pc);width:15px;height:15px}
+
+.legend{display:flex;gap:18px;margin:36px 0 10px;font-size:12px;color:var(--muted)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:1px}
+
+.row{display:grid;grid-template-columns:1fr 92px;gap:4px 16px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
+.kw{font-size:16px;font-weight:600;letter-spacing:-.01em;word-break:break-all}
+.total{font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:600;font-size:16px;text-align:right;font-variant-numeric:tabular-nums}
+.track{grid-column:1/3;height:7px;border-radius:4px;background:#EDEDE8;overflow:hidden;display:flex;margin-top:8px}
+.seg-pc{background:var(--pc)}
+.seg-mo{background:var(--mobile)}
+.meta{grid-column:1/3;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;color:var(--muted);margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+
+.state{padding:44px 0;color:var(--muted);font-size:15px;line-height:1.7}
+.state.error{color:var(--warn)}
+.count{font-size:13px;color:var(--muted);margin-top:20px;line-height:1.7}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.7}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">네이버 검색광고 · 키워드도구</p>
+  <h1>키워드 검색량</h1>
+  <p class="sub">키워드를 입력하면 지난 30일간 PC·모바일 검색수를 조회합니다. 쉼표로 최대 3개까지 넣을 수 있습니다.</p>
+
+  <div class="bar">
+    <input type="text" id="q" placeholder="예: 캠핑의자, 등산화" autocomplete="off" maxlength="100" autofocus>
+    <button id="go">조회</button>
+  </div>
+  <label class="opts"><input type="checkbox" id="rel"> 연관 키워드도 함께 보기</label>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--pc)"></span>PC</span>
+    <span><span class="dot" style="background:var(--mobile)"></span>모바일</span>
+  </div>
+
+  <div id="out"><p class="state">조회 결과가 여기에 표시됩니다.</p></div>
+
+  <footer>검색량은 네이버 검색광고 키워드도구 데이터를 기준으로 하며, 10 미만은 9로 표기합니다. 조회 결과는 최대 24시간 캐시됩니다.</footer>
+</div>
+
+<script>
+const q = document.getElementById('q');
+const go = document.getElementById('go');
+const rel = document.getElementById('rel');
+const out = document.getElementById('out');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => n.toLocaleString('ko-KR');
+
+function state(msg, isError){
+  out.innerHTML = '<p class="state' + (isError ? ' error' : '') + '">' + esc(msg) + '</p>';
+}
+
+function render(rows, cached){
+  if(!rows.length){ state('검색량 데이터가 없는 키워드입니다. 철자를 확인하거나 다른 키워드를 넣어보세요.'); return; }
+  const max = Math.max.apply(null, rows.map(r => r.total)) || 1;
+  out.innerHTML = rows.map(r => {
+    const width = Math.max(2, r.total / max * 100);
+    const pcPct = r.total ? r.pc / r.total * 100 : 0;
+    return '<div class="row">'
+      + '<div class="kw">' + esc(r.keyword) + '</div>'
+      + '<div class="total">' + fmt(r.total) + '</div>'
+      + '<div class="track" style="width:' + width + '%">'
+      +   '<div class="seg-pc" style="width:' + pcPct + '%"></div>'
+      +   '<div class="seg-mo" style="width:' + (100 - pcPct) + '%"></div>'
+      + '</div>'
+      + '<div class="meta"><span>PC ' + fmt(r.pc) + '</span><span>모바일 ' + fmt(r.mobile)
+      +   '</span><span>경쟁 ' + esc(r.comp) + '</span><span>광고 ' + r.depth + '개</span></div>'
+      + '</div>';
+  }).join('')
+  + '<p class="count">' + rows.length + '개' + (cached ? ' · 캐시된 결과' : '') + '</p>';
+}
+
+let busy = false;
+async function run(){
+  if(busy) return;
+  const keywords = q.value.split(',').map(s => s.trim()).filter(Boolean).slice(0, 3);
+  if(!keywords.length){ q.focus(); return; }
+  busy = true; go.disabled = true;
+  state('조회 중…');
+  try{
+    const res = await fetch('/api/search', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({keywords, related: rel.checked})
+    });
+    const data = await res.json();
+    if(data.error) state(data.error, true); else render(data.rows, data.cached);
+  }catch(e){
+    state('연결에 실패했습니다. 네트워크를 확인하고 다시 시도해 주세요.', true);
+  }finally{
+    busy = false; go.disabled = false;
+  }
+}
+
+go.addEventListener('click', run);
+q.addEventListener('keydown', e => { if(e.key === 'Enter') run(); });
+</script>
+</body>
+</html>
