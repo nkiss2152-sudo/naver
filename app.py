@@ -281,13 +281,15 @@ def trend_for(keyword, total):
         return None
     key = "TREND:" + normalize(keyword).upper()
     series = cache_get(key)
-    if series is None:
+    if not series:
         if not upstream_allowed():
             return None
-        series = fetch_trend([keyword]).get(keyword, [])
+        groups = fetch_trend([keyword])
+        # 응답 title 이 요청 키워드와 다를 수 있어 첫 그룹으로도 받는다
+        series = groups.get(keyword) or (list(groups.values())[0] if groups else [])
+        if not series:
+            return None          # 빈 결과는 캐시하지 않는다
         cache_put(key, series)
-    if not series:
-        return None
 
     base = series[-1][1] or max((r for _, r in series), default=0)
     if not base:
@@ -317,7 +319,7 @@ def api_search():
 
     ip = client_ip()
     if rate_limited(ip):
-        return jsonify({"error": "잠시 뒤에 다시 조회해 주세요. 쇧은 시간에 너무 많이 요청했습니다."}), 429
+        return jsonify({"error": "잠시 뒤에 다시 조회해 주세요. 짧은 시간에 너무 많이 요청했습니다."}), 429
 
     body = request.get_json(silent=True) or {}
     raw = body.get("keywords", [])
@@ -359,7 +361,7 @@ def api_search():
             seen_kw.add(r["keyword"])
             unique.append(r)
 
-    trends = {}
+    trends, trend_error = {}, None
     for keyword in keywords:
         norm = normalize(keyword).upper()
         match = next((r for r in unique if normalize(r["keyword"]).upper() == norm), None)
@@ -367,12 +369,22 @@ def api_search():
             continue
         try:
             series = trend_for(keyword, match["total"])
-        except (RuntimeError, requests.RequestException):
+        except RuntimeError as exc:
+            series, trend_error = None, str(exc)
+        except requests.HTTPError as exc:
             series = None
+            code = exc.response.status_code if exc.response is not None else "?"
+            detail = (exc.response.text[:200] if exc.response is not None else "")
+            trend_error = "데이터랩 응답 {}: {}".format(code, detail)
+        except requests.RequestException as exc:
+            series, trend_error = None, "데이터랩 연결 실패: {}".format(type(exc).__name__)
         if series:
             trends[match["keyword"]] = series
 
-    return jsonify({"rows": unique[:200], "cached": from_cache, "trends": trends})
+    payload = {"rows": unique[:200], "cached": from_cache, "trends": trends}
+    if trend_error:
+        payload["trend_error"] = trend_error
+    return jsonify(payload)
 
 
 init_db()
