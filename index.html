@@ -87,6 +87,15 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
 .auto{background:#EEF1FB;border-color:#C7D2F5}
 .sec{margin:28px 0 14px;font-size:13px;font-weight:700;letter-spacing:.02em;
   padding-bottom:8px;border-bottom:1px solid var(--line)}
+.gcard{border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:8px;background:var(--card)}
+.gcard .h{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.gcard .k{font-size:15px;font-weight:600;word-break:break-all}
+.gcard .p{font-family:"IBM Plex Mono",monospace;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.gcard .t{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.gcard .t span{font-size:11px;font-family:"IBM Plex Mono",monospace;color:var(--muted);
+  border:1px solid var(--line);border-radius:20px;padding:2px 8px}
+.gcard .t span.hot{color:var(--mobile);border-color:var(--mobile)}
+.gsum{font-size:13px;color:var(--muted);line-height:1.7;margin:16px 0 12px}
 .rel{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:9px;background:var(--card);padding:4px}
 .rel label{display:flex;align-items:center;gap:10px;padding:8px 10px;font-size:14px;border-radius:6px;cursor:pointer}
 .rel label:hover{background:var(--paper)}
@@ -130,6 +139,7 @@ table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric
   <div class="tabs">
     <button class="tab on" data-p="search">검색량 조회</button>
     <button class="tab" data-p="demand">수요판단</button>
+    <button class="tab" data-p="gap">빈틈 찾기</button>
   </div>
 
   <!-- ── 검색량 조회 ───────────────────────────── -->
@@ -171,6 +181,19 @@ table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric
     </div>
 
     <div id="dlist"></div>
+  </div>
+
+  <!-- ── 빈틈 찾기 ─────────────────────────────── -->
+  <div class="panel" id="p-gap">
+    <p class="sub" style="margin-top:-8px">경쟁이 치열한 키워드를 넣으면, 그 주변에서 사람들은 계속 검색하는데 아무도 광고를 붙이지 않은 지점을 찾아냅니다.</p>
+
+    <div class="field">
+      <label for="gkw">레드오션 키워드</label>
+      <input type="text" id="gkw" placeholder="예: 신발 탈취제" maxlength="30">
+    </div>
+    <button class="go" id="ggo">빈틈 찾기</button>
+
+    <div id="gout"></div>
   </div>
 
   <footer>검색량은 네이버 검색광고 키워드도구 기준이며 10 미만은 9로 표기합니다. 조회 결과는 최대 24시간 캐시됩니다. 저장한 제품 목록은 이 브라우저에만 보관됩니다.</footer>
@@ -414,6 +437,61 @@ $('dsave').addEventListener('click', () => {
 });
 renderList();
 
+
+/* ───────── 빈틈 찾기 ───────── */
+function gstate(msg, err){
+  $('gout').innerHTML = '<p class="state'+(err?' error':'')+'" style="padding:32px 0">'+esc(msg)+'</p>';
+}
+
+function grender(d){
+  const c = d.core;
+  const cards = d.gaps.map(g => {
+    const tags = [];
+    if(g.depth <= 2) tags.push(['광고 '+g.depth+'개', true]);
+    else tags.push(['광고 '+g.depth+'개', false]);
+    tags.push(['경쟁 '+g.comp, g.comp === '낮음']);
+    if(g.problem) tags.push(['문제형', true]);
+    return '<div class="gcard"><div class="h">'
+      + '<span class="k">'+esc(g.keyword)+'</span>'
+      + '<span class="p">'+g.score+'점 · '+fmt(g.total)+'회</span></div>'
+      + '<div class="t">'+tags.map(([t,on]) =>
+          '<span'+(on?' class="hot"':'')+'>'+esc(t)+'</span>').join('')+'</div></div>';
+  }).join('');
+
+  $('gout').innerHTML =
+    '<div class="gsum">기준 키워드 <b>'+esc(c.keyword)+'</b> — 월 '+fmt(c.total)+'회, 경쟁 '+esc(c.comp)
+    + ', 광고 '+c.depth+'개.<br>'
+    + (d.seeds.length ? '유망한 문제형 키워드 '+d.seeds.length+'개(' + d.seeds.map(esc).join(', ')
+        + ')로 한 번 더 파고들어 ' : '')
+    + '총 '+fmt(d.scanned)+'개를 훑었고, 그중 광고가 거의 없고 경쟁도 높지 않은 곳이 '
+    + '<b>'+d.unserved_count+'개</b>입니다.</div>'
+    + cards
+    + '<p class="disc" style="font-size:12px;color:var(--muted);line-height:1.7;margin-top:20px;'
+    + 'padding-top:16px;border-top:1px solid var(--line)">광고가 없다는 건 두 가지 뜻일 수 있습니다. '
+    + '아직 아무도 안 팔거나(기회), 팔아도 돈이 안 되거나(함정). 데이터로는 구분되지 않습니다. '
+    + '여기 나온 건 확인해볼 후보지 답이 아닙니다. 상위 몇 개를 실제로 네이버에 검색해서 '
+    + '어떤 글이 나오는지, 파는 사람이 있는지 직접 보세요.</p>';
+}
+
+let gbusy = false;
+async function findGaps(){
+  if(gbusy) return;
+  const kw = $('gkw').value.trim();
+  if(!kw){ $('gkw').focus(); return; }
+  gbusy = true; $('ggo').disabled = true; $('ggo').textContent = '찾는 중…';
+  gstate('연관 키워드를 훑고 유망한 지점을 다시 파고드는 중입니다. 20초쯤 걸립니다…');
+  try{
+    const res = await fetch('/api/gaps', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({keyword:kw})});
+    const d = await res.json();
+    if(d.error) gstate(d.error, true);
+    else if(!d.gaps.length) gstate('연관 키워드가 충분하지 않습니다. 더 넓은 키워드로 시도해 보세요.');
+    else grender(d);
+  }catch(e){ gstate('연결에 실패했습니다. 잠시 뒤 다시 시도해 주세요.', true); }
+  finally{ gbusy = false; $('ggo').disabled = false; $('ggo').textContent = '빈틈 찾기'; }
+}
+$('ggo').addEventListener('click', findGaps);
+$('gkw').addEventListener('keydown', e => { if(e.key === 'Enter') findGaps(); });
 </script>
 </body>
 </html>

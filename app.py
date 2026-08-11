@@ -173,6 +173,13 @@ def to_int(value):
         return 0
 
 
+def to_float(value):
+    try:
+        return float(str(value).replace(",", "").replace("%", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def call_naver(keyword):
     api_key, secret_key, customer_id = credentials()
     timestamp = str(round(time.time() * 1000))
@@ -205,6 +212,10 @@ def call_naver(keyword):
                 "total": pc + mo,
                 "comp": item.get("compIdx", "-"),
                 "depth": to_int(item.get("plAvgDepth")),
+                "ctr": round(
+                    (to_float(item.get("monthlyAvePcCtr"))
+                     + to_float(item.get("monthlyAveMobileCtr"))) / 2, 2
+                ),
             }
         )
     return rows
@@ -301,6 +312,86 @@ def trend_for(keyword, total):
     ]
 
 
+# ------------------------------------------------------------------ 빈틈 키워드
+# 문제 해결 의도가 뚜렷한 표현. 단순 '추천/후기'는 탐색형이라 제외한다.
+PROBLEM_WORDS = [
+    "방법", "없애", "제거", "해결", "원인", "안될", "안돼", "고장", "심할", "너무",
+    "대처", "예방", "완화", "줄이", "막는", "왜", "안나", "실패", "부작용", "차이",
+    "대신", "직접", "셀프", "잘못", "문제",
+]
+GAP_MAX_SEED = 3          # 2차 확장에 쓸 씨앗 키워드 수
+GAP_MIN_VOLUME = 100      # 이보다 적으면 노이즈로 본다
+
+
+def is_problem(keyword):
+    return any(w in keyword for w in PROBLEM_WORDS)
+
+
+def gap_score(row):
+    """수요는 있는데 아무도 안 붙은 정도. 0~100."""
+    import math
+    # 수요 (0~40): 100회=0, 10000회=40
+    demand = 40 * min(1.0, math.log10(max(row["total"], 100) / 100) / 2)
+    # 미개척 (0~35): 광고가 적을수록 높다
+    unserved = 35 * max(0.0, 1 - row["depth"] / 10)
+    # 진입 여지 (0~15): 경쟁강도
+    entry = {"낮음": 15, "중간": 8, "높음": 2}.get(row["comp"], 8)
+    # 문제형 표현 (0~10)
+    problem = 10 if is_problem(row["keyword"]) else 0
+    return round(demand + unserved + entry + problem)
+
+
+def find_gaps(keyword, expand=True):
+    """레드오션 키워드에서 아직 안 풀린 지점을 뽑는다."""
+    rows, _ = lookup(keyword)
+    norm = normalize(keyword).upper()
+    core = next((r for r in rows if normalize(r["keyword"]).upper() == norm), None)
+    if not core:
+        return None
+
+    pool = {}
+    for r in rows:
+        if normalize(r["keyword"]).upper() != norm and r["total"] >= GAP_MIN_VOLUME:
+            pool[r["keyword"]] = r
+
+    # 1차에서 유망한 문제형 키워드를 씨앗으로 2차 확장
+    seeds = []
+    if expand:
+        cands = [r for r in pool.values() if is_problem(r["keyword"])]
+        cands.sort(key=gap_score, reverse=True)
+        for r in cands[:GAP_MAX_SEED]:
+            try:
+                more, _ = lookup(r["keyword"])
+            except (RuntimeError, requests.RequestException):
+                break
+            seeds.append(r["keyword"])
+            for m in more:
+                if m["total"] >= GAP_MIN_VOLUME and m["keyword"] not in pool \
+                        and normalize(m["keyword"]).upper() != norm:
+                    pool[m["keyword"]] = m
+
+    gaps = []
+    for r in pool.values():
+        gaps.append({
+            "keyword": r["keyword"], "total": r["total"],
+            "comp": r["comp"], "depth": r["depth"],
+            "problem": is_problem(r["keyword"]),
+            "score": gap_score(r),
+        })
+    gaps.sort(key=lambda g: g["score"], reverse=True)
+
+    unserved = [g for g in gaps if g["depth"] <= 2 and g["comp"] != "높음"]
+
+    return {
+        "core": {"keyword": core["keyword"], "total": core["total"],
+                 "comp": core["comp"], "depth": core["depth"]},
+        "seeds": seeds,
+        "scanned": len(pool),
+        "gaps": gaps[:40],
+        "unserved_count": len(unserved),
+    }
+
+
 # ------------------------------------------------------------------ 라우트
 @app.get("/")
 def index():
@@ -385,6 +476,30 @@ def api_search():
     if trend_error:
         payload["trend_error"] = trend_error
     return jsonify(payload)
+
+
+@app.post("/api/gaps")
+def api_gaps():
+    if not all(credentials()):
+        return jsonify({"error": "서버가 아직 설정되지 않았습니다. 운영자에게 알려주세요."}), 503
+    if rate_limited(client_ip()):
+        return jsonify({"error": "잠시 뒤에 다시 시도해 주세요. 짧은 시간에 너무 많이 요청했습니다."}), 429
+
+    body = request.get_json(silent=True) or {}
+    keyword = str(body.get("keyword", "")).strip()[:MAX_KEYWORD_LEN]
+    if not keyword:
+        return jsonify({"error": "키워드를 입력해 주세요."}), 400
+
+    try:
+        result = find_gaps(keyword, expand=bool(body.get("expand", True)))
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 429
+    except requests.RequestException:
+        return jsonify({"error": "네이버 서버와 통신하지 못했습니다. 잠시 뒤 다시 시도해 주세요."}), 502
+
+    if not result:
+        return jsonify({"error": "검색량 데이터가 없는 키워드입니다. 철자를 확인해 주세요."}), 404
+    return jsonify(result)
 
 
 init_db()
