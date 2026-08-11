@@ -86,7 +86,12 @@ def init_db():
 
 
 def cache_get(key):
-    ttl = TREND_TTL if key.startswith("TREND:") else CACHE_TTL
+    if key.startswith("TREND:"):
+        ttl = TREND_TTL
+    elif key.startswith("UNMET:"):
+        ttl = SEARCH_TTL
+    else:
+        ttl = CACHE_TTL
     with db() as conn:
         row = conn.execute(
             "SELECT payload, created FROM cache WHERE key = ?", (key,)
@@ -361,6 +366,123 @@ def trend_for(keyword, total):
     ]
 
 
+# ------------------------------------------------------------------ 미해결 신호 (지식iN·카페·블로그)
+SEARCH_SOURCES = [("kin", "지식iN"), ("cafearticle", "카페"), ("blog", "블로그")]
+SEARCH_TTL = int(os.getenv("SEARCH_TTL", 259200))   # 3일
+
+# 생활용품에서 반복되는 불만 축. 각 축마다 실제로 쓰이는 표현을 모았다.
+COMPLAINT_AXES = [
+    ("효과 없음",   ["효과가 없", "효과없", "소용없", "그대로", "안없어", "안 없어", "여전",
+                     "변화가 없", "차이가 없", "별로 안", "안 되네", "안되네"]),
+    ("금방 돌아옴", ["다시 나", "또 나", "금방", "하루 만", "며칠 만", "잠깐", "일시적",
+                     "얼마 안 가", "지속", "오래 안"]),
+    ("근본 원인",   ["근본", "원인", "왜 그런", "왜 자꾸", "재발", "반복"]),
+    ("성분 걱정",   ["성분", "유해", "독성", "아기", "임산부", "반려", "알레르기", "피부",
+                     "화학", "무해", "친환경", "냄새가 독"]),
+    ("사용 번거로움", ["번거", "귀찮", "매번", "일일이", "손이 많이", "불편", "오래 걸"]),
+    ("가격 부담",   ["비싸", "가성비", "돈만", "아깝", "낭비"]),
+]
+# 시판 제품이 못 채워서 사람들이 직접 만들어 쓰는 신호
+DIY_WORDS = ["베이킹소다", "식초", "신문지", "숯", "커피", "녹차", "소금", "직접 만들",
+             "만들어 쓰", "집에서", "홈메이드", "대용"]
+# 질문이 아직 안 풀렸다는 신호
+UNSOLVED_WORDS = ["방법 없", "어떻게 해야", "도와주", "알려주세요", "해결 방법",
+                  "다들 어떻게", "추천 좀", "고민", "제발"]
+
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+def strip_tags(text):
+    return TAG_RE.sub("", text or "").replace("&quot;", '"').replace("&amp;", "&") \
+        .replace("&lt;", "<").replace("&gt;", ">").replace("&#39;", "'")
+
+
+def search_docs(source, query, display=100):
+    """API HUB 검색 API. 제목+본문 요약을 돌려준다."""
+    client_id, client_secret = datalab_credentials()
+    res = requests.get(
+        APIHUB_BASE + "/search/v1/" + source,
+        params={"query": query, "display": display, "sort": "sim"},
+        headers={
+            "X-NCP-APIGW-API-KEY-ID": client_id,
+            "X-NCP-APIGW-API-KEY": client_secret,
+        },
+        timeout=15,
+    )
+    if res.status_code in (401, 403):
+        raise RuntimeError("검색 API 인증에 실패했습니다. 운영자에게 알려주세요.")
+    if res.status_code == 429:
+        raise RuntimeError("검색 호출 한도를 넘었습니다. 잠시 뒤 다시 시도하세요.")
+    res.raise_for_status()
+    body = res.json()
+    docs = []
+    for item in body.get("items", []):
+        docs.append({
+            "title": strip_tags(item.get("title", "")),
+            "text": strip_tags(item.get("description", "")),
+            "link": item.get("link", ""),
+        })
+    return docs, body.get("total", 0)
+
+
+def analyze_complaints(keyword):
+    """키워드 주변 글에서 어떤 불만이 안 풀렸는지 센다."""
+    if not all(datalab_credentials()):
+        return None
+
+    key = "UNMET:" + normalize(keyword).upper()
+    cached = cache_get(key)
+    if cached:
+        return cached
+    if not upstream_allowed(len(SEARCH_SOURCES)):
+        raise RuntimeError("오늘 조회 한도를 모두 썼습니다. 내일 다시 이용해 주세요.")
+
+    docs, totals = [], {}
+    for source, label in SEARCH_SOURCES:
+        try:
+            found, total = search_docs(source, keyword)
+        except requests.RequestException:
+            continue
+        totals[label] = total
+        for d in found:
+            d["source"] = label
+            docs.append(d)
+
+    if not docs:
+        return None
+
+    axes = []
+    for name, words in COMPLAINT_AXES:
+        hits = []
+        for d in docs:
+            blob = d["title"] + " " + d["text"]
+            matched = [w for w in words if w in blob]
+            if matched:
+                hits.append({"source": d["source"], "title": d["title"],
+                             "link": d["link"], "matched": matched[0]})
+        axes.append({"name": name, "count": len(hits), "samples": hits[:4]})
+    axes.sort(key=lambda a: a["count"], reverse=True)
+
+    def count_any(words):
+        return sum(1 for d in docs if any(w in d["title"] + " " + d["text"] for w in words))
+
+    diy = count_any(DIY_WORDS)
+    unsolved = count_any(UNSOLVED_WORDS)
+
+    result = {
+        "keyword": keyword,
+        "doc_count": len(docs),
+        "totals": totals,
+        "axes": axes,
+        "diy": diy,
+        "unsolved": unsolved,
+        "diy_ratio": round(diy / len(docs) * 100),
+        "unsolved_ratio": round(unsolved / len(docs) * 100),
+    }
+    cache_put(key, result)
+    return result
+
+
 # ------------------------------------------------------------------ 빈틈 키워드
 # 문제 해결 의도가 뚜렷한 표현. 단순 '추천/후기'는 탐색형이라 제외한다.
 PROBLEM_WORDS = [
@@ -551,6 +673,30 @@ def api_gaps():
 
     if not result:
         return jsonify({"error": "검색량 데이터가 없는 키워드입니다. 철자를 확인해 주세요."}), 404
+    return jsonify(result)
+
+
+@app.post("/api/unmet")
+def api_unmet():
+    if not all(datalab_credentials()):
+        return jsonify({"error": "검색 API가 아직 설정되지 않았습니다. 운영자에게 알려주세요."}), 503
+    if rate_limited(client_ip()):
+        return jsonify({"error": "잠시 뒤에 다시 시도해 주세요. 짧은 시간에 너무 많이 요청했습니다."}), 429
+
+    body = request.get_json(silent=True) or {}
+    keyword = str(body.get("keyword", "")).strip()[:MAX_KEYWORD_LEN]
+    if not keyword:
+        return jsonify({"error": "키워드를 입력해 주세요."}), 400
+
+    try:
+        result = analyze_complaints(keyword)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 429
+    except requests.RequestException:
+        return jsonify({"error": "네이버 서버와 통신하지 못했습니다. 잠시 뒤 다시 시도해 주세요."}), 502
+
+    if not result:
+        return jsonify({"error": "관련 글을 찾지 못했습니다. 다른 키워드로 시도해 보세요."}), 404
     return jsonify(result)
 
 
