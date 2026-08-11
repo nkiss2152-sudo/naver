@@ -46,8 +46,10 @@ DAILY_UPSTREAM_CAP = int(os.getenv("DAILY_UPSTREAM_CAP", 3000))
 MAX_KEYWORDS = 3
 MAX_KEYWORD_LEN = 30
 
-DATALAB_URL = "https://openapi.naver.com/v1/datalab/search"
-TREND_MONTHS = int(os.getenv("TREND_MONTHS", 12))
+# NAVER API HUB (클라우드 플랫폼). 개발자센터와 주소·헤더가 다르다.
+APIHUB_BASE = "https://naverapihub.apigw.ntruss.com"
+DATALAB_URL = APIHUB_BASE + "/search-trend/v1/search"
+TREND_MONTHS = int(os.getenv("TREND_MONTHS", 36))   # 3년 — 계절성을 보려면 2년으로는 부족
 TREND_TTL = int(os.getenv("TREND_TTL", 604800))   # 7일 (월간 데이터라 자주 안 변함)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -236,6 +238,7 @@ def lookup(keyword):
 
 # ------------------------------------------------------------------ 월간 추이 (데이터랩)
 def datalab_credentials():
+    """API HUB 애플리케이션의 Client ID / Secret."""
     return (os.getenv("NAVER_CLIENT_ID"), os.getenv("NAVER_CLIENT_SECRET"))
 
 
@@ -265,14 +268,14 @@ def fetch_trend(keywords):
         DATALAB_URL,
         json=body,
         headers={
-            "X-Naver-Client-Id": client_id,
-            "X-Naver-Client-Secret": client_secret,
+            "X-NCP-APIGW-API-KEY-ID": client_id,
+            "X-NCP-APIGW-API-KEY": client_secret,
             "Content-Type": "application/json",
         },
         timeout=15,
     )
     if res.status_code in (401, 403):
-        raise RuntimeError("데이터랩 인증이 만료됐습니다. 운영자에게 알려주세요.")
+        raise RuntimeError("검색어 트렌드 인증에 실패했습니다. 운영자에게 알려주세요.")
     if res.status_code == 429:
         raise RuntimeError("추이 조회가 몰리고 있습니다. 잠시 뒤 다시 시도하세요.")
     res.raise_for_status()
@@ -284,6 +287,51 @@ def fetch_trend(keywords):
             for p in group.get("data", [])
         ]
     return out
+
+
+def trend_stats(series):
+    """월별 추정치에서 연간 흐름과 계절성을 뽑는다."""
+    if len(series) < 13:
+        return None
+    est = [p["estimate"] for p in series]
+
+    def window(back):
+        """back개월 전부터 12개월치 합. 데이터가 모자라면 None."""
+        end = len(est) - back
+        start = end - 12
+        return sum(est[start:end]) if start >= 0 else None
+
+    last12, prev12, prev24 = window(0), window(12), window(24)
+    yoy = ((last12 - prev12) / prev12 * 100) if prev12 else None
+    yoy_prev = ((prev12 - prev24) / prev24 * 100) if prev24 else None
+
+    # 계절성: 같은 달끼리 평균. 완결된 해가 있어야 의미가 있다.
+    by_month = {}
+    for p in series:
+        m = int(p["month"][5:7])
+        by_month.setdefault(m, []).append(p["estimate"])
+    avg = {m: sum(v) / len(v) for m, v in by_month.items() if len(v) >= 2}
+    peak = low = None
+    if len(avg) >= 6:
+        peak = max(avg, key=avg.get)
+        low = min(avg, key=avg.get)
+
+    # 연도별 합계 (완결 여부 표시)
+    years = {}
+    for p in series:
+        years.setdefault(p["month"][:4], []).append(p["estimate"])
+    yearly = [{"year": y, "total": sum(v), "months": len(v), "full": len(v) == 12}
+              for y, v in sorted(years.items())]
+
+    return {
+        "last12": last12, "prev12": prev12, "prev24": prev24,
+        "yoy": round(yoy, 1) if yoy is not None else None,
+        "yoy_prev": round(yoy_prev, 1) if yoy_prev is not None else None,
+        "peak_month": peak, "low_month": low,
+        "peak_avg": round(avg[peak]) if peak else None,
+        "low_avg": round(avg[low]) if low else None,
+        "yearly": yearly,
+    }
 
 
 def trend_for(keyword, total):
@@ -452,7 +500,7 @@ def api_search():
             seen_kw.add(r["keyword"])
             unique.append(r)
 
-    trends, trend_error = {}, None
+    trends, stats, trend_error = {}, {}, None
     for keyword in keywords:
         norm = normalize(keyword).upper()
         match = next((r for r in unique if normalize(r["keyword"]).upper() == norm), None)
@@ -471,8 +519,11 @@ def api_search():
             series, trend_error = None, "데이터랩 연결 실패: {}".format(type(exc).__name__)
         if series:
             trends[match["keyword"]] = series
+            st = trend_stats(series)
+            if st:
+                stats[match["keyword"]] = st
 
-    payload = {"rows": unique[:200], "cached": from_cache, "trends": trends}
+    payload = {"rows": unique[:200], "cached": from_cache, "trends": trends, "trend_stats": stats}
     if trend_error:
         payload["trend_error"] = trend_error
     return jsonify(payload)

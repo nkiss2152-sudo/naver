@@ -87,6 +87,17 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
 .auto{background:#EEF1FB;border-color:#C7D2F5}
 .sec{margin:28px 0 14px;font-size:13px;font-weight:700;letter-spacing:.02em;
   padding-bottom:8px;border-bottom:1px solid var(--line)}
+.tstat{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0 18px}
+.tstat div{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--card)}
+.tstat .lbl{font-size:11px;color:var(--muted);letter-spacing:.04em}
+.tstat .val{font-family:"IBM Plex Mono",monospace;font-size:17px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+.tstat .val.up{color:var(--mobile)} .tstat .val.down{color:var(--warn)}
+.yrow{display:flex;align-items:center;gap:10px;margin:5px 0;font-size:12px}
+.yrow .y{font-family:"IBM Plex Mono",monospace;width:38px;color:var(--muted)}
+.yrow .yb{flex:1;height:16px;background:#EDEDE8;border-radius:3px;overflow:hidden}
+.yrow .yb i{display:block;height:100%;background:var(--pc)}
+.yrow .yb i.part{background:repeating-linear-gradient(45deg,var(--pc),var(--pc) 4px,#8AA3E8 4px,#8AA3E8 8px)}
+.yrow .yv{font-family:"IBM Plex Mono",monospace;width:92px;text-align:right;font-variant-numeric:tabular-nums}
 .gcard{border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:8px;background:var(--card)}
 .gcard .h{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .gcard .k{font-size:15px;font-weight:600;word-break:break-all}
@@ -221,26 +232,59 @@ async function search(keywords, related){
 function state(msg, isError){
   $('out').innerHTML = '<p class="state' + (isError?' error':'') + '">' + esc(msg) + '</p>';
 }
-function renderTrends(trends){
+function renderTrends(trends, stats){
   if(!trends) return '';
   return Object.keys(trends).map(kw => {
-    const s = trends[kw];
-    if(!s || s.length < 2) return '';
-    const max = Math.max.apply(null, s.map(p => p.estimate)) || 1;
-    const peak = s.reduce((a,b) => b.estimate > a.estimate ? b : a);
-    const bars = s.map(p => {
-      const h = Math.max(2, Math.round(p.estimate/max*84)), isP = p.month === peak.month;
-      return '<div class="col'+(isP?' peak':'')+'" title="'+esc(p.month)+' 약 '+fmt(p.estimate)+'회">'
-        + '<div class="v">'+(isP?fmt(p.estimate):'')+'</div><div class="b" style="height:'+h+'px"></div></div>';
+    const series = trends[kw];
+    if(!series || series.length < 2) return '';
+    const st = (stats||{})[kw];
+    const max = Math.max.apply(null, series.map(p => p.estimate)) || 1;
+    const peak = series.reduce((a,b) => b.estimate > a.estimate ? b : a);
+
+    // 연간 요약
+    let head = '';
+    if(st){
+      const cards = [];
+      cards.push(['최근 12개월', fmt(st.last12)+'회', '']);
+      if(st.yoy !== null) cards.push(['전년 동기 대비',
+        (st.yoy>0?'+':'')+st.yoy+'%', st.yoy>0?'up':(st.yoy<0?'down':'')]);
+      if(st.yoy_prev !== null) cards.push(['그 전년 대비',
+        (st.yoy_prev>0?'+':'')+st.yoy_prev+'%', '']);
+      if(st.peak_month) cards.push(['성수기', st.peak_month+'월 · '+fmt(st.peak_avg)+'회', '']);
+      if(st.low_month) cards.push(['비수기', st.low_month+'월 · '+fmt(st.low_avg)+'회', '']);
+      head = '<div class="tstat">'
+        + cards.map(([l,v,c]) => '<div><div class="lbl">'+esc(l)+'</div>'
+            + '<div class="val '+c+'">'+esc(v)+'</div></div>').join('') + '</div>';
+
+      const ymax = Math.max.apply(null, st.yearly.map(y => y.total)) || 1;
+      head += '<div style="margin-bottom:18px">' + st.yearly.map(y =>
+        '<div class="yrow"><span class="y">'+y.year+'</span>'
+        + '<span class="yb"><i class="'+(y.full?'':'part')+'" style="width:'
+        + Math.max(2, y.total/ymax*100)+'%"></i></span>'
+        + '<span class="yv">'+fmt(y.total)+'</span>'
+        + (y.full ? '' : '<span style="color:var(--muted);font-size:11px">'+y.months+'개월</span>')
+        + '</div>').join('') + '</div>';
+    }
+
+    const bars = series.map(p => {
+      const h = Math.max(2, Math.round(p.estimate / max * 88));
+      const isPeak = p.month === peak.month;
+      return '<div class="col' + (isPeak ? ' peak' : '') + '" title="'
+        + esc(p.month) + ' 약 ' + fmt(p.estimate) + '회">'
+        + '<div class="b" style="height:' + h + 'px"></div></div>';
     }).join('');
-    const labels = s.map((p,i) => '<span>'+(i===0||i===s.length-1||p.month===peak.month
-      ? esc(p.month.slice(2).replace('-','.')) : '')+'</span>').join('');
-    return '<div class="trend"><h2>'+esc(kw)+' 월간 추이</h2>'
-      + '<p class="note">최고치 '+esc(peak.month)+', 약 '+fmt(peak.estimate)+'회. 데이터랩 상대지수를 현재 검색량에 맞춰 환산한 추정치입니다.</p>'
-      + '<div class="cols">'+bars+'</div><div class="months">'+labels+'</div></div>';
+    const labels = series.map((p,i) =>
+      '<span>' + (p.month.slice(5) === '01' || i === series.length-1
+        ? esc(p.month.slice(2,4)) : '') + '</span>').join('');
+
+    return '<div class="trend"><h2>' + esc(kw) + ' 검색량 추이</h2>'
+      + '<p class="note">' + series.length + '개월치를 현재 검색량 기준으로 환산한 추정치입니다.</p>'
+      + head
+      + '<div class="cols">' + bars + '</div><div class="months">' + labels + '</div></div>';
   }).join('');
 }
-function render(rows, cached, trends){
+
+function render(rows, cached, trends, stats){
   if(!rows.length){ state('검색량 데이터가 없는 키워드입니다. 철자를 확인하거나 다른 키워드를 넣어보세요.'); return; }
   const max = Math.max.apply(null, rows.map(r => r.total)) || 1;
   $('out').innerHTML = rows.map(r => {
@@ -253,7 +297,7 @@ function render(rows, cached, trends){
       + '<span>경쟁 '+esc(r.comp)+'</span><span>광고 '+r.depth+'개</span></div></div>';
   }).join('')
   + '<p class="count">'+rows.length+'개'+(cached?' · 캐시된 결과':'')+'</p>'
-  + renderTrends(trends);
+  + renderTrends(trends, stats);
 }
 let busy = false;
 async function run(){
@@ -263,7 +307,7 @@ async function run(){
   busy = true; $('go').disabled = true; state('조회 중…');
   try{
     const d = await search(kws, $('rel').checked);
-    if(d.error) state(d.error, true); else render(d.rows, d.cached, d.trends);
+    if(d.error) state(d.error, true); else render(d.rows, d.cached, d.trends, d.trend_stats);
   }catch(e){ state('연결에 실패했습니다. 잠시 뒤 다시 시도해 주세요.', true); }
   finally{ busy = false; $('go').disabled = false; }
 }
