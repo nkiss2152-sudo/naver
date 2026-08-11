@@ -53,6 +53,17 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--pc);outline-off
 .seg-mo{background:var(--mobile)}
 .meta{grid-column:1/3;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;color:var(--muted);margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
 
+.trend{margin-top:32px;padding-top:24px;border-top:1px solid var(--line)}
+.trend h2{font-size:14px;font-weight:700;margin:0 0 2px;letter-spacing:-.01em}
+.trend .note{font-size:12px;color:var(--muted);margin:0 0 16px}
+.cols{display:flex;align-items:flex-end;gap:4px;height:110px}
+.col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
+.col .b{background:var(--pc);border-radius:3px 3px 0 0;min-height:2px;transition:opacity .15s}
+.col:hover .b{opacity:.7}
+.col .v{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--muted);text-align:center;margin-bottom:4px;font-variant-numeric:tabular-nums}
+.months{display:flex;gap:4px;margin-top:6px}
+.months span{flex:1;font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--muted);text-align:center}
+.peak .b{background:var(--mobile)}
 .state{padding:44px 0;color:var(--muted);font-size:15px;line-height:1.7}
 .state.error{color:var(--warn)}
 .count{font-size:13px;color:var(--muted);margin-top:20px;line-height:1.7}
@@ -79,7 +90,7 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-si
 
   <div id="out"><p class="state">조회 결과가 여기에 표시됩니다.</p></div>
 
-  <footer>검색량은 네이버 검색광고 키워드도구 데이터를 기준으로 하며, 10 미만은 9로 표기합니다. 조회 결과는 최대 24시간 캐시됩니다.</footer>
+  <footer>검색량은 네이버 검색광고 키워드도구 데이터를 기준으로 하며, 10 미만은 9로 표기합니다. 조회 결과는 최대 24시간 캐시됩니다. 월간 추이는 데이터랩 상대지수를 환산한 추정치로, 실제 값과 차이가 있을 수 있습니다.</footer>
 </div>
 
 <script>
@@ -94,7 +105,7 @@ function state(msg, isError){
   out.innerHTML = '<p class="state' + (isError ? ' error' : '') + '">' + esc(msg) + '</p>';
 }
 
-function render(rows, cached){
+function render(rows, cached, trends){
   if(!rows.length){ state('검색량 데이터가 없는 키워드입니다. 철자를 확인하거나 다른 키워드를 넣어보세요.'); return; }
   const max = Math.max.apply(null, rows.map(r => r.total)) || 1;
   out.innerHTML = rows.map(r => {
@@ -111,7 +122,33 @@ function render(rows, cached){
       +   '</span><span>경쟁 ' + esc(r.comp) + '</span><span>광고 ' + r.depth + '개</span></div>'
       + '</div>';
   }).join('')
-  + '<p class="count">' + rows.length + '개' + (cached ? ' · 캐시된 결과' : '') + '</p>';
+  + '<p class="count">' + rows.length + '개' + (cached ? ' · 캐시된 결과' : '') + '</p>'
+  + renderTrends(trends);
+}
+
+function renderTrends(trends){
+  if(!trends) return '';
+  return Object.keys(trends).map(kw => {
+    const series = trends[kw];
+    if(!series || series.length < 2) return '';
+    const max = Math.max.apply(null, series.map(p => p.estimate)) || 1;
+    const peak = series.reduce((a,b) => b.estimate > a.estimate ? b : a);
+    const bars = series.map(p => {
+      const h = Math.max(2, Math.round(p.estimate / max * 88));
+      const isPeak = p.month === peak.month;
+      return '<div class="col' + (isPeak ? ' peak' : '') + '" title="'
+        + esc(p.month) + ' 약 ' + fmt(p.estimate) + '회">'
+        + '<div class="v">' + (isPeak ? fmt(p.estimate) : '') + '</div>'
+        + '<div class="b" style="height:' + h + 'px"></div></div>';
+    }).join('');
+    const labels = series.map((p, i) =>
+      '<span>' + (i === 0 || i === series.length - 1 || p.month === peak.month
+        ? esc(p.month.slice(2).replace('-', '.')) : '') + '</span>').join('');
+    return '<div class="trend"><h2>' + esc(kw) + ' 월간 추이</h2>'
+      + '<p class="note">최고치는 ' + esc(peak.month.replace('-', '년 ')) + '월, 약 '
+      + fmt(peak.estimate) + '회. 데이터랩 상대지수를 현재 검색량에 맞춰 환산한 추정치입니다.</p>'
+      + '<div class="cols">' + bars + '</div><div class="months">' + labels + '</div></div>';
+  }).join('');
 }
 
 let busy = false;
@@ -128,7 +165,7 @@ async function run(){
       body: JSON.stringify({keywords, related: rel.checked})
     });
     const data = await res.json();
-    if(data.error) state(data.error, true); else render(data.rows, data.cached);
+    if(data.error) state(data.error, true); else render(data.rows, data.cached, data.trends);
   }catch(e){
     state('연결에 실패했습니다. 네트워크를 확인하고 다시 시도해 주세요.', true);
   }finally{

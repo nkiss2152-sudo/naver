@@ -8,11 +8,19 @@ services:
     startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT app:app
     healthCheckPath: /healthz
     envVars:
+      # sync: false 는 "값은 대시보드에서 직접 입력" 이라는 뜻입니다.
+      # 키가 저장소에 올라가지 않도록 하기 위한 설정입니다.
       - key: NAVER_API_KEY
         sync: false
       - key: NAVER_SECRET_KEY
         sync: false
       - key: NAVER_CUSTOMER_ID
+        sync: false
+      # 아래 두 개는 월간 추이용 (developers.naver.com 에서 발급).
+      # 비워두면 추이 차트만 안 나오고 검색량 조회는 정상 동작합니다.
+      - key: NAVER_CLIENT_ID
+        sync: false
+      - key: NAVER_CLIENT_SECRET
         sync: false
       - key: CACHE_TTL
         value: "86400"
@@ -22,5 +30,9 @@ services:
         value: "20"
       - key: DAILY_UPSTREAM_CAP
         value: "3000"
+      - key: TREND_MONTHS
+        value: "12"
+      - key: TREND_TTL
+        value: "604800"
       - key: PYTHON_VERSION
         value: "3.12.6"
