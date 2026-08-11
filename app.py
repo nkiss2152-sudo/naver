@@ -338,7 +338,8 @@ def trend_for(keyword, total):
     """월별 추정 검색량. 마지막 달 비율을 현재 검색량에 맞춰 환산한다."""
     if not all(datalab_credentials()):
         return None
-    key = "TREND:" + normalize(keyword).upper()
+    # 기간을 키에 넣어 TREND_MONTHS 를 바꾸면 옛 캐시를 자동으로 버리게 한다
+    key = "TREND:{}:".format(TREND_MONTHS) + normalize(keyword).upper()
     series = cache_get(key)
     if not series:
         if not upstream_allowed():
