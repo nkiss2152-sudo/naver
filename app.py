@@ -371,37 +371,29 @@ SEARCH_SOURCES = [("kin", "지식iN"), ("cafearticle", "카페"), ("blog", "블�
 SEARCH_TTL = int(os.getenv("SEARCH_TTL", 259200))   # 3일
 
 # 생활용품에서 반복되는 불만 축.
-# query: 네이버에 실제로 던질 검색어 (키워드 + 불만 표현)
-# words: 결과 글이 진짜 그 불만인지 확인하는 표현
+# 글 자체가 이미 그 제품 얘기이므로, 표현은 불만을 가리키는 것만 담는다.
 COMPLAINT_AXES = [
-    {"name": "효과 없음",
-     "queries": ["효과 없", "소용없", "그대로"],
-     "words": ["효과가 없", "효과없", "소용없", "그대로", "안없어", "안 없어", "여전",
-               "변화가 없", "차이가 없", "안 되네", "안되네", "실패"]},
-    {"name": "금방 돌아옴",
-     "queries": ["다시 냄새", "금방 다시", "며칠 만에"],
-     "words": ["다시 나", "또 나", "금방", "하루 만", "며칠 만", "잠깐", "일시적",
-               "얼마 안 가", "오래 안", "지속이 안"]},
-    {"name": "근본 원인",
-     "queries": ["근본 원인", "왜 자꾸", "계속 재발"],
-     "words": ["근본", "원인", "왜 그런", "왜 자꾸", "재발", "반복", "계속"]},
-    {"name": "성분 걱정",
-     "queries": ["성분 안전", "아기 있는데", "유해 성분"],
-     "words": ["유해", "독성", "아기", "아이", "임산부", "반려", "강아지", "고양이",
-               "알레르기", "피부", "화학", "무해", "친환경", "안전한지", "괜찮을까"]},
-    {"name": "사용 번거로움",
-     "queries": ["번거롭", "귀찮"],
-     "words": ["번거", "귀찮", "매번", "일일이", "손이 많이", "불편", "오래 걸"]},
-    {"name": "가격 부담",
-     "queries": ["비싸", "가성비"],
-     "words": ["비싸", "가성비", "돈만", "아깝", "낭비", "부담"]},
+    ("효과 없음",   ["효과가 없", "효과없", "효과 별로", "소용없", "소용 없", "안없어",
+                     "안 없어", "여전히", "변화가 없", "차이가 없", "안 되네", "안되네",
+                     "실패", "무용지물", "체감이 안"]),
+    ("금방 돌아옴", ["다시 나", "또 나", "금방 다시", "하루 만", "며칠 만", "일시적",
+                     "얼마 안 가", "오래 안 가", "지속이 안", "잠깐뿐"]),
+    ("근본 원인",   ["근본적", "근본 원인", "왜 그런", "왜 자꾸", "재발", "반복해서",
+                     "원인이 뭐", "원인을 모르"]),
+    ("성분 걱정",   ["유해", "독성", "아기한테", "아이한테", "임산부", "반려동물",
+                     "강아지한테", "고양이한테", "알레르기", "피부에 안", "화학 성분",
+                     "성분이 걱정", "안전한지", "무해한"]),
+    ("사용 번거로움", ["번거", "귀찮", "매번 뿌", "일일이", "손이 많이", "불편해",
+                       "오래 걸려"]),
+    ("가격 부담",   ["너무 비싸", "가격이 부담", "가성비가 안", "돈만 나가", "돈 아깝",
+                     "돈만 버", "괜히 샀"]),
 ]
 # 시판 제품이 못 채워서 사람들이 직접 만들어 쓰는 신호
-DIY_WORDS = ["베이킹소다", "베이킹 소다", "식초", "신문지", "숯", "커피", "녹차", "소금",
-             "직접 만들", "만들어 쓰", "집에서", "홈메이드", "대용", "자작"]
+DIY_WORDS = ["베이킹소다", "베이킹 소다", "식초", "신문지", "녹차 티백", "숯을",
+             "직접 만들", "만들어 쓰", "집에서 만", "홈메이드", "대용으로", "자작"]
 # 질문이 아직 안 풀렸다는 신호
 UNSOLVED_WORDS = ["방법 없", "어떻게 해야", "도와주", "알려주세요", "해결 방법",
-                  "다들 어떻게", "고민", "제발", "answer", "답답"]
+                  "다들 어떻게", "제발", "답답", "미치겠"]
 
 TAG_RE = re.compile(r"<[^>]+>")
 
@@ -439,96 +431,85 @@ def search_docs(source, query, display=100):
     return docs, body.get("total", 0)
 
 
+def relevance_tokens(keyword):
+    """키워드를 토막 내 관련성 검사에 쓸 조각을 만든다."""
+    parts = [p for p in re.split(r"\s+", keyword.strip()) if p]
+    return parts or [keyword]
+
+
+def is_relevant(doc, tokens):
+    """글이 정말 그 제품 얘기인지 본다.
+    핵심 명사(마지막 토막)가 제목이나 본문에 있으면 통과.
+    '신발 탈취제'로 검색해도 '운동화 냄새' 글이 나오므로 앞 단어는 강제하지 않는다."""
+    return tokens[-1] in doc["title"] + " " + doc["text"]
+
+
 def analyze_complaints(keyword):
-    """축마다 '키워드 + 불만 표현'으로 검색해, 그 불만이 실제로 담긴 글만 센다."""
+    """키워드로 모은 글 중, 관련 있는 것만 골라 불만 축을 센다."""
     if not all(datalab_credentials()):
         return None
 
-    key = "UNMET2:" + normalize(keyword).upper()
+    key = "UNMET3:" + normalize(keyword).upper()
     cached = cache_get(key)
     if cached:
         return cached
-
-    # 축별 질의 1회 + 카페 1회 + 시장 파악용 1회
-    need = len(COMPLAINT_AXES) + 2
-    if not upstream_allowed(need):
+    if not upstream_allowed(len(SEARCH_SOURCES)):
         raise RuntimeError("오늘 조회 한도를 모두 썼습니다. 내일 다시 이용해 주세요.")
 
-    seen_links, axes, totals = set(), [], {}
-
-    def collect(source, label, query, limit=30):
+    tokens = relevance_tokens(keyword)
+    docs, totals, dropped, seen_links = [], {}, 0, set()
+    for source, label in SEARCH_SOURCES:
         try:
-            found, total = search_docs(source, query, display=limit)
+            found, total = search_docs(source, keyword, display=100)
         except requests.RequestException:
-            return [], 0
+            continue
+        totals[label] = total
         for d in found:
+            if not is_relevant(d, tokens):
+                dropped += 1
+                continue
+            if d["link"] in seen_links:
+                continue
+            seen_links.add(d["link"])
             d["source"] = label
-        return found, total
+            docs.append(d)
 
-    # 축마다 질의 1회. 표현을 나열해 한 번에 던지고 확인은 words 로 한다.
-    for axis in COMPLAINT_AXES:
-        hits = []
-        query = "{} {}".format(keyword, " ".join(axis["queries"]))
-        matched_docs, _ = collect("kin", "지식iN", query, limit=50)
-
-        for d in matched_docs:
-            if d["link"] in seen_links:
-                continue
-            blob = d["title"] + " " + d["text"]
-            # 검색으로 걸러진 뒤에도 표현이 실제로 들어있는지 다시 확인한다
-            hit = next((w for w in axis["words"] if w in blob), None)
-            if not hit:
-                continue
-            seen_links.add(d["link"])
-            hits.append({"source": d["source"], "title": d["title"],
-                         "link": d["link"], "matched": hit})
-        axes.append({"name": axis["name"], "count": len(hits), "samples": hits[:5],
-                     "_axis": axis})
-
-    axes.sort(key=lambda a: a["count"], reverse=True)
-
-    # 상위 2개 축만 카페까지 추가로 훑어 근거를 보강한다
-    for entry in axes[:2]:
-        axis = entry["_axis"]
-        query = "{} {}".format(keyword, " ".join(axis["queries"]))
-        more, _ = collect("cafearticle", "카페", query, limit=50)
-        for d in more:
-            if d["link"] in seen_links:
-                continue
-            blob = d["title"] + " " + d["text"]
-            hit = next((w for w in axis["words"] if w in blob), None)
-            if not hit:
-                continue
-            seen_links.add(d["link"])
-            entry["count"] += 1
-            if len(entry["samples"]) < 5:
-                entry["samples"].append({"source": d["source"], "title": d["title"],
-                                         "link": d["link"], "matched": hit})
-    axes.sort(key=lambda a: a["count"], reverse=True)
-    for entry in axes:
-        entry.pop("_axis", None)
-
-    # 시장 규모 파악용 (불만 표현 없는 순수 검색)
-    base, base_total = collect("kin", "지식iN", keyword, limit=100)
-    totals["지식iN"] = base_total
-    diy = sum(1 for d in base if any(w in d["title"] + " " + d["text"] for w in DIY_WORDS))
-    unsolved = sum(1 for d in base
-                   if any(w in d["title"] + " " + d["text"] for w in UNSOLVED_WORDS))
-
-    total_hits = sum(a["count"] for a in axes)
-    if not total_hits and not base:
+    if not docs:
         return None
+
+    axes = []
+    for name, words in COMPLAINT_AXES:
+        hits = []
+        for d in docs:
+            blob = d["title"] + " " + d["text"]
+            hit = next((w for w in words if w in blob), None)
+            if not hit:
+                continue
+            # 제목에 불만 표현이 있으면 더 확실한 근거다
+            weight = (2 if hit in d["title"] else 0) + (1 if tokens[-1] in d["title"] else 0)
+            hits.append({"source": d["source"], "title": d["title"],
+                         "link": d["link"], "matched": hit, "_w": weight})
+        hits.sort(key=lambda h: h["_w"], reverse=True)
+        for h in hits:
+            h.pop("_w", None)
+        axes.append({"name": name, "count": len(hits), "samples": hits[:5]})
+    axes.sort(key=lambda a: a["count"], reverse=True)
+
+    def count_any(words):
+        return sum(1 for d in docs if any(w in d["title"] + " " + d["text"] for w in words))
+
+    diy, unsolved = count_any(DIY_WORDS), count_any(UNSOLVED_WORDS)
 
     result = {
         "keyword": keyword,
-        "doc_count": len(seen_links),
-        "base_count": len(base),
+        "doc_count": len(docs),
+        "dropped": dropped,
         "totals": totals,
         "axes": axes,
         "diy": diy,
         "unsolved": unsolved,
-        "diy_ratio": round(diy / len(base) * 100) if base else 0,
-        "unsolved_ratio": round(unsolved / len(base) * 100) if base else 0,
+        "diy_ratio": round(diy / len(docs) * 100),
+        "unsolved_ratio": round(unsolved / len(docs) * 100),
     }
     cache_put(key, result)
     return result
