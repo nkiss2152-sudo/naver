@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>키워드 검색량 조회</title>
-<meta name="description" content="네이버 키워드의 월간 PC·모바일 검색량을 조회합니다.">
+<meta name="description" content="네이버 키워드의 월간 PC·모바일 검색량을 조회하고 제품 수요를 판단합니다.">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/400.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/600.css">
@@ -12,62 +12,112 @@
 :root{
   --paper:#F6F6F3; --card:#FFF; --ink:#15171B; --muted:#71757E;
   --line:#E4E4DE; --pc:#3B5BDB; --mobile:#0FA36B; --warn:#B4442B;
+  --gA:#0F7B4F; --gB:#3B5BDB; --gC:#B07B18; --gD:#8A8D94;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
 }
 *{box-sizing:border-box}
-body{
-  margin:0;background:var(--paper);color:var(--ink);
+body{margin:0;background:var(--paper);color:var(--ink);
   font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;
-  -webkit-font-smoothing:antialiased;
-}
-.wrap{max-width:880px;margin:0 auto;padding:56px 20px 96px}
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:880px;margin:0 auto;padding:48px 20px 96px}
 .eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 14px}
-h1{font-size:clamp(28px,6vw,42px);line-height:1.15;letter-spacing:-.03em;margin:0 0 10px;font-weight:800}
-.sub{color:var(--muted);font-size:15px;margin:0 0 32px;line-height:1.65}
+h1{font-size:clamp(26px,6vw,38px);line-height:1.15;letter-spacing:-.03em;margin:0 0 10px;font-weight:800}
+.sub{color:var(--muted);font-size:15px;margin:0 0 24px;line-height:1.65}
 
-.bar{display:flex;gap:10px;flex-wrap:wrap}
-input[type=text]{
-  flex:1 1 300px;min-width:0;padding:16px 18px;font-size:17px;font-family:inherit;color:var(--ink);
-  background:var(--card);border:1.5px solid var(--line);border-radius:10px;
-  transition:border-color .15s,box-shadow .15s;
-}
-input[type=text]:focus{outline:none;border-color:var(--pc);box-shadow:0 0 0 3px rgba(59,91,219,.14)}
-button{
-  padding:16px 28px;font-size:16px;font-weight:700;font-family:inherit;color:#fff;
-  background:var(--ink);border:0;border-radius:10px;cursor:pointer;transition:opacity .15s;
-}
-button:hover{opacity:.85}
-button:disabled{opacity:.4;cursor:default}
-button:focus-visible,input:focus-visible{outline:2px solid var(--pc);outline-offset:2px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:28px}
+.tab{padding:11px 18px;font-size:15px;font-weight:600;font-family:inherit;background:none;border:0;
+  border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;margin-bottom:-1px}
+.tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.panel{display:none}
+.panel.on{display:block}
 
-.opts{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14px;color:var(--muted)}
+.bar{display:flex;gap:8px;flex-wrap:wrap}
+input[type=text],input[type=number],select{
+  padding:13px 15px;font-size:16px;font-family:inherit;color:var(--ink);background:var(--card);
+  border:1.5px solid var(--line);border-radius:9px;transition:border-color .15s,box-shadow .15s;max-width:100%}
+input:focus,select:focus{outline:none;border-color:var(--pc);box-shadow:0 0 0 3px rgba(59,91,219,.14)}
+.bar input[type=text]{flex:1 1 260px;min-width:0}
+button.go{padding:13px 24px;font-size:15px;font-weight:700;font-family:inherit;color:#fff;
+  background:var(--ink);border:0;border-radius:9px;cursor:pointer;transition:opacity .15s}
+button.go:hover{opacity:.85}
+button.go:disabled{opacity:.4;cursor:default}
+button.ghost{padding:9px 16px;font-size:14px;font-weight:600;font-family:inherit;color:var(--ink);
+  background:var(--card);border:1.5px solid var(--line);border-radius:8px;cursor:pointer}
+button.ghost:hover{border-color:var(--ink)}
+:focus-visible{outline:2px solid var(--pc);outline-offset:2px}
+
+.opts{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:14px;color:var(--muted)}
 .opts input{accent-color:var(--pc);width:15px;height:15px}
-
-.legend{display:flex;gap:18px;margin:36px 0 10px;font-size:12px;color:var(--muted)}
+.legend{display:flex;gap:18px;margin:32px 0 6px;font-size:12px;color:var(--muted)}
 .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:1px}
 
-.row{display:grid;grid-template-columns:1fr 92px;gap:4px 16px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
+.row{display:grid;grid-template-columns:1fr 92px;gap:4px 16px;align-items:baseline;padding:15px 0;border-bottom:1px solid var(--line)}
 .kw{font-size:16px;font-weight:600;letter-spacing:-.01em;word-break:break-all}
-.total{font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:600;font-size:16px;text-align:right;font-variant-numeric:tabular-nums}
+.total{font-family:var(--mono);font-weight:600;font-size:16px;text-align:right;font-variant-numeric:tabular-nums}
 .track{grid-column:1/3;height:7px;border-radius:4px;background:#EDEDE8;overflow:hidden;display:flex;margin-top:8px}
 .seg-pc{background:var(--pc)}
 .seg-mo{background:var(--mobile)}
-.meta{grid-column:1/3;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;color:var(--muted);margin-top:8px;display:flex;gap:16px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
+.meta{grid-column:1/3;font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:8px;
+  display:flex;gap:14px;flex-wrap:wrap;font-variant-numeric:tabular-nums}
 
-.trend{margin-top:32px;padding-top:24px;border-top:1px solid var(--line)}
-.trend h2{font-size:14px;font-weight:700;margin:0 0 2px;letter-spacing:-.01em}
-.trend .note{font-size:12px;color:var(--muted);margin:0 0 16px}
-.cols{display:flex;align-items:flex-end;gap:4px;height:110px}
+.trend{margin-top:30px;padding-top:22px;border-top:1px solid var(--line)}
+.trend h2{font-size:14px;font-weight:700;margin:0 0 2px}
+.trend .note{font-size:12px;color:var(--muted);margin:0 0 14px}
+.cols{display:flex;align-items:flex-end;gap:4px;height:104px}
 .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
-.col .b{background:var(--pc);border-radius:3px 3px 0 0;min-height:2px;transition:opacity .15s}
-.col:hover .b{opacity:.7}
-.col .v{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--muted);text-align:center;margin-bottom:4px;font-variant-numeric:tabular-nums}
+.col .b{background:var(--pc);border-radius:3px 3px 0 0;min-height:2px}
+.col .v{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;margin-bottom:4px}
 .months{display:flex;gap:4px;margin-top:6px}
-.months span{flex:1;font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--muted);text-align:center}
+.months span{flex:1;font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center}
 .peak .b{background:var(--mobile)}
-.state{padding:44px 0;color:var(--muted);font-size:15px;line-height:1.7}
+
+.state{padding:40px 0;color:var(--muted);font-size:15px;line-height:1.7}
 .state.error{color:var(--warn)}
-.count{font-size:13px;color:var(--muted);margin-top:20px;line-height:1.7}
-footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.7}
+.count{font-size:13px;color:var(--muted);margin-top:18px;line-height:1.7}
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.7}
+
+/* 수요판단 */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid2 > *{min-width:0}
+@media (max-width:600px){.grid2{grid-template-columns:1fr}}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+.field .hint{font-size:12px;color:var(--muted);font-weight:400;margin-left:6px}
+.field input,.field select{width:100%}
+.auto{background:#EEF1FB;border-color:#C7D2F5}
+.sec{margin:28px 0 14px;font-size:13px;font-weight:700;letter-spacing:.02em;
+  padding-bottom:8px;border-bottom:1px solid var(--line)}
+.rel{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:9px;background:var(--card);padding:4px}
+.rel label{display:flex;align-items:center;gap:10px;padding:8px 10px;font-size:14px;border-radius:6px;cursor:pointer}
+.rel label:hover{background:var(--paper)}
+.rel input{accent-color:var(--pc);width:15px;height:15px;flex:none}
+.rel .n{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.relsum{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px;font-size:14px}
+.relsum b{font-family:var(--mono);font-size:17px}
+
+.verdict{margin-top:28px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);padding:22px}
+.vhead{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.badge{width:46px;height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:24px;font-weight:800;flex:none}
+.vscore{font-family:var(--mono);font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}
+.vscore span{font-size:15px;color:var(--muted)}
+.vtext{font-size:15px;font-weight:700}
+.vtext em{display:block;font-style:normal;font-size:13px;font-weight:400;color:var(--muted);margin-top:2px}
+.bd{margin-top:18px;border-top:1px solid var(--line);padding-top:14px;display:grid;gap:7px}
+.bd div{display:flex;align-items:baseline;font-size:13px;gap:10px}
+.bd .l{color:var(--muted);flex:none;width:130px}
+.bd .m{flex:1;height:5px;border-radius:3px;background:#EDEDE8;overflow:hidden}
+.bd .m i{display:block;height:100%;background:var(--pc)}
+.bd .s{font-family:var(--mono);font-size:13px;width:52px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+
+table.saved{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}
+table.saved th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  font-weight:600;padding:8px 8px 8px 0;border-bottom:1px solid var(--line)}
+table.saved td{padding:11px 8px 11px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.gtag{display:inline-block;min-width:22px;text-align:center;padding:2px 6px;border-radius:5px;color:#fff;font-weight:700;font-size:12px}
+.del{border:0;background:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px}
+.del:hover{color:var(--warn)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -75,106 +125,307 @@ footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-si
 <div class="wrap">
   <p class="eyebrow">네이버 검색광고 · 키워드도구</p>
   <h1>키워드 검색량</h1>
-  <p class="sub">키워드를 입력하면 지난 30일간 PC·모바일 검색수를 조회합니다. 쉼표로 최대 3개까지 넣을 수 있습니다.</p>
+  <p class="sub">키워드를 입력하면 지난 30일간 PC·모바일 검색수를 조회합니다.</p>
 
-  <div class="bar">
-    <input type="text" id="q" placeholder="예: 캠핑의자, 등산화" autocomplete="off" maxlength="100" autofocus>
-    <button id="go">조회</button>
-  </div>
-  <label class="opts"><input type="checkbox" id="rel"> 연관 키워드도 함께 보기</label>
-
-  <div class="legend">
-    <span><span class="dot" style="background:var(--pc)"></span>PC</span>
-    <span><span class="dot" style="background:var(--mobile)"></span>모바일</span>
+  <div class="tabs">
+    <button class="tab on" data-p="search">검색량 조회</button>
+    <button class="tab" data-p="demand">수요판단</button>
   </div>
 
-  <div id="out"><p class="state">조회 결과가 여기에 표시됩니다.</p></div>
+  <!-- ── 검색량 조회 ───────────────────────────── -->
+  <div class="panel on" id="p-search">
+    <div class="bar">
+      <input type="text" id="q" placeholder="예: 캠핑의자, 등산화" autocomplete="off" maxlength="100">
+      <button class="go" id="go">조회</button>
+    </div>
+    <label class="opts"><input type="checkbox" id="rel"> 연관 키워드도 함께 보기</label>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--pc)"></span>PC</span>
+      <span><span class="dot" style="background:var(--mobile)"></span>모바일</span>
+    </div>
+    <div id="out"><p class="state">조회 결과가 여기에 표시됩니다.</p></div>
+  </div>
 
-  <footer>검색량은 네이버 검색광고 키워드도구 데이터를 기준으로 하며, 10 미만은 9로 표기합니다. 조회 결과는 최대 24시간 캐시됩니다. 월간 추이는 데이터랩 상대지수를 환산한 추정치로, 실제 값과 차이가 있을 수 있습니다.</footer>
+  <!-- ── 수요판단 ─────────────────────────────── -->
+  <div class="panel" id="p-demand">
+    <p class="sub" style="margin-top:-8px">제품 키워드를 넣으면 검색량과 경쟁강도를 자동으로 채우고, 6개 항목 100점 기준으로 등급을 매깁니다.</p>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="dname">제품명</label>
+        <input type="text" id="dname" placeholder="예: 신발 탈취제" maxlength="40">
+      </div>
+      <div class="field">
+        <label for="dkw">핵심 키워드</label>
+        <input type="text" id="dkw" placeholder="예: 신발 탈취제" maxlength="30">
+      </div>
+    </div>
+    <button class="go" id="dgo">분석</button>
+
+    <div id="dbody" style="display:none">
+      <div class="sec">자동 수집</div>
+      <div class="grid2">
+        <div class="field">
+          <label>핵심 월검색량 <span class="hint">PC+모바일</span></label>
+          <input type="number" id="dvol" class="auto" min="0">
+        </div>
+        <div class="field">
+          <label for="dtrend">12개월 검색 증감률 <span class="hint">%</span></label>
+          <input type="number" id="dtrend" step="0.1" placeholder="예: 18">
+        </div>
+      </div>
+
+      <div class="sec">문제형 연관 키워드 <span class="hint" style="font-weight:400">체크한 것만 합산됩니다</span></div>
+      <div class="rel" id="drel"></div>
+      <div class="relsum"><span>합산 검색량</span><b id="drelsum">0</b></div>
+
+      <div class="sec">직접 판단</div>
+      <div class="grid2">
+        <div class="field">
+          <label for="dintent">구매의도</label>
+          <select id="dintent">
+            <option value="5">정보성 검색 위주</option>
+            <option value="10" selected>문제 해결형</option>
+            <option value="15">제품명/구매형</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dcomp">경쟁강도</label>
+          <select id="dcomp">
+            <option value="0">대기업·브랜드 장악</option>
+            <option value="5">경쟁 매우 높음</option>
+            <option value="10" selected>경쟁 보통</option>
+            <option value="15">경쟁 약함</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dproof">판매 증거</label>
+          <select id="dproof">
+            <option value="0">판매 흔적 적음</option>
+            <option value="5">일부 상품 판매됨</option>
+            <option value="10" selected>다수 상품 리뷰 누적</option>
+            <option value="15">상위제품 판매량 매우 높음</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="drivals">경쟁 상품수 <span class="hint">스마트스토어 검색결과</span></label>
+          <input type="number" id="drivals" min="0" placeholder="예: 5000">
+        </div>
+      </div>
+
+      <div id="dverdict"></div>
+      <button class="ghost" id="dsave" style="margin-top:16px">이 제품 목록에 저장</button>
+    </div>
+
+    <div id="dlist"></div>
+  </div>
+
+  <footer>검색량은 네이버 검색광고 키워드도구 기준이며 10 미만은 9로 표기합니다. 조회 결과는 최대 24시간 캐시됩니다. 저장한 제품 목록은 이 브라우저에만 보관됩니다.</footer>
 </div>
 
 <script>
-const q = document.getElementById('q');
-const go = document.getElementById('go');
-const rel = document.getElementById('rel');
-const out = document.getElementById('out');
+const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt = n => n.toLocaleString('ko-KR');
+const fmt = n => Number(n||0).toLocaleString('ko-KR');
 
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + t.dataset.p));
+}));
+
+async function search(keywords, related){
+  const res = await fetch('/api/search', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({keywords, related})
+  });
+  return res.json();
+}
+
+/* ───────── 검색량 조회 ───────── */
 function state(msg, isError){
-  out.innerHTML = '<p class="state' + (isError ? ' error' : '') + '">' + esc(msg) + '</p>';
+  $('out').innerHTML = '<p class="state' + (isError?' error':'') + '">' + esc(msg) + '</p>';
 }
-
-function render(rows, cached, trends){
-  if(!rows.length){ state('검색량 데이터가 없는 키워드입니다. 철자를 확인하거나 다른 키워드를 넣어보세요.'); return; }
-  const max = Math.max.apply(null, rows.map(r => r.total)) || 1;
-  out.innerHTML = rows.map(r => {
-    const width = Math.max(2, r.total / max * 100);
-    const pcPct = r.total ? r.pc / r.total * 100 : 0;
-    return '<div class="row">'
-      + '<div class="kw">' + esc(r.keyword) + '</div>'
-      + '<div class="total">' + fmt(r.total) + '</div>'
-      + '<div class="track" style="width:' + width + '%">'
-      +   '<div class="seg-pc" style="width:' + pcPct + '%"></div>'
-      +   '<div class="seg-mo" style="width:' + (100 - pcPct) + '%"></div>'
-      + '</div>'
-      + '<div class="meta"><span>PC ' + fmt(r.pc) + '</span><span>모바일 ' + fmt(r.mobile)
-      +   '</span><span>경쟁 ' + esc(r.comp) + '</span><span>광고 ' + r.depth + '개</span></div>'
-      + '</div>';
-  }).join('')
-  + '<p class="count">' + rows.length + '개' + (cached ? ' · 캐시된 결과' : '') + '</p>'
-  + renderTrends(trends);
-}
-
 function renderTrends(trends){
   if(!trends) return '';
   return Object.keys(trends).map(kw => {
-    const series = trends[kw];
-    if(!series || series.length < 2) return '';
-    const max = Math.max.apply(null, series.map(p => p.estimate)) || 1;
-    const peak = series.reduce((a,b) => b.estimate > a.estimate ? b : a);
-    const bars = series.map(p => {
-      const h = Math.max(2, Math.round(p.estimate / max * 88));
-      const isPeak = p.month === peak.month;
-      return '<div class="col' + (isPeak ? ' peak' : '') + '" title="'
-        + esc(p.month) + ' 약 ' + fmt(p.estimate) + '회">'
-        + '<div class="v">' + (isPeak ? fmt(p.estimate) : '') + '</div>'
-        + '<div class="b" style="height:' + h + 'px"></div></div>';
+    const s = trends[kw];
+    if(!s || s.length < 2) return '';
+    const max = Math.max.apply(null, s.map(p => p.estimate)) || 1;
+    const peak = s.reduce((a,b) => b.estimate > a.estimate ? b : a);
+    const bars = s.map(p => {
+      const h = Math.max(2, Math.round(p.estimate/max*84)), isP = p.month === peak.month;
+      return '<div class="col'+(isP?' peak':'')+'" title="'+esc(p.month)+' 약 '+fmt(p.estimate)+'회">'
+        + '<div class="v">'+(isP?fmt(p.estimate):'')+'</div><div class="b" style="height:'+h+'px"></div></div>';
     }).join('');
-    const labels = series.map((p, i) =>
-      '<span>' + (i === 0 || i === series.length - 1 || p.month === peak.month
-        ? esc(p.month.slice(2).replace('-', '.')) : '') + '</span>').join('');
-    return '<div class="trend"><h2>' + esc(kw) + ' 월간 추이</h2>'
-      + '<p class="note">최고치는 ' + esc(peak.month.replace('-', '년 ')) + '월, 약 '
-      + fmt(peak.estimate) + '회. 데이터랩 상대지수를 현재 검색량에 맞춰 환산한 추정치입니다.</p>'
-      + '<div class="cols">' + bars + '</div><div class="months">' + labels + '</div></div>';
+    const labels = s.map((p,i) => '<span>'+(i===0||i===s.length-1||p.month===peak.month
+      ? esc(p.month.slice(2).replace('-','.')) : '')+'</span>').join('');
+    return '<div class="trend"><h2>'+esc(kw)+' 월간 추이</h2>'
+      + '<p class="note">최고치 '+esc(peak.month)+', 약 '+fmt(peak.estimate)+'회. 데이터랩 상대지수를 현재 검색량에 맞춰 환산한 추정치입니다.</p>'
+      + '<div class="cols">'+bars+'</div><div class="months">'+labels+'</div></div>';
   }).join('');
 }
-
+function render(rows, cached, trends){
+  if(!rows.length){ state('검색량 데이터가 없는 키워드입니다. 철자를 확인하거나 다른 키워드를 넣어보세요.'); return; }
+  const max = Math.max.apply(null, rows.map(r => r.total)) || 1;
+  $('out').innerHTML = rows.map(r => {
+    const w = Math.max(2, r.total/max*100), pcp = r.total ? r.pc/r.total*100 : 0;
+    return '<div class="row"><div class="kw">'+esc(r.keyword)+'</div>'
+      + '<div class="total">'+fmt(r.total)+'</div>'
+      + '<div class="track" style="width:'+w+'%"><div class="seg-pc" style="width:'+pcp+'%"></div>'
+      + '<div class="seg-mo" style="width:'+(100-pcp)+'%"></div></div>'
+      + '<div class="meta"><span>PC '+fmt(r.pc)+'</span><span>모바일 '+fmt(r.mobile)+'</span>'
+      + '<span>경쟁 '+esc(r.comp)+'</span><span>광고 '+r.depth+'개</span></div></div>';
+  }).join('')
+  + '<p class="count">'+rows.length+'개'+(cached?' · 캐시된 결과':'')+'</p>'
+  + renderTrends(trends);
+}
 let busy = false;
 async function run(){
   if(busy) return;
-  const keywords = q.value.split(',').map(s => s.trim()).filter(Boolean).slice(0, 3);
-  if(!keywords.length){ q.focus(); return; }
-  busy = true; go.disabled = true;
-  state('조회 중…');
+  const kws = $('q').value.split(',').map(s=>s.trim()).filter(Boolean).slice(0,3);
+  if(!kws.length){ $('q').focus(); return; }
+  busy = true; $('go').disabled = true; state('조회 중…');
   try{
-    const res = await fetch('/api/search', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({keywords, related: rel.checked})
-    });
-    const data = await res.json();
-    if(data.error) state(data.error, true); else render(data.rows, data.cached, data.trends);
-  }catch(e){
-    state('연결에 실패했습니다. 네트워크를 확인하고 다시 시도해 주세요.', true);
-  }finally{
-    busy = false; go.disabled = false;
-  }
+    const d = await search(kws, $('rel').checked);
+    if(d.error) state(d.error, true); else render(d.rows, d.cached, d.trends);
+  }catch(e){ state('연결에 실패했습니다. 잠시 뒤 다시 시도해 주세요.', true); }
+  finally{ busy = false; $('go').disabled = false; }
 }
+$('go').addEventListener('click', run);
+$('q').addEventListener('keydown', e => { if(e.key==='Enter') run(); });
 
-go.addEventListener('click', run);
-q.addEventListener('keydown', e => { if(e.key === 'Enter') run(); });
+/* ───────── 수요판단 ───────── */
+const PROBLEM = ['방법','없애','제거','해결','추천','후기','비교','원인','효과','순위','고르','고민','냄새','대처','예방','관리','세척','정리','대체'];
+const COMP_MAP = {'높음':'5','중간':'10','낮음':'15'};
+const SCALES = {
+  vol:  [[30000,20],[10000,15],[3000,10],[0,5]],
+  rel:  [[50000,20],[20000,15],[5000,10],[0,5]],
+  trend:[[30,15],[10,10],[0,5],[-Infinity,0]]
+};
+const pick = (scale, v) => (scale.find(([t]) => v >= t) || [0,0])[1];
+const GRADES = [
+  [80,'A','최우선 검토','바로 제품기획·원가·샘플 검토','var(--gA)'],
+  [65,'B','유망','테스트 생산 / 시장조사','var(--gB)'],
+  [50,'C','조건부','강한 차별화가 있을 때만 진행','var(--gC)'],
+  [0, 'D','보류','우선순위 낮춤','var(--gD)']
+];
+let related = [];
+
+function relSum(){
+  return Array.from(document.querySelectorAll('#drel input:checked'))
+    .reduce((a,el) => a + Number(el.dataset.total), 0);
+}
+function score(){
+  const vol = Number($('dvol').value)||0, rsum = relSum(), tr = Number($('dtrend').value)||0;
+  const parts = [
+    ['핵심 검색량', pick(SCALES.vol, vol), 20],
+    ['연관 수요',   pick(SCALES.rel, rsum), 20],
+    ['검색 추세',   pick(SCALES.trend, tr), 15],
+    ['구매의도',    Number($('dintent').value), 15],
+    ['경쟁강도',    Number($('dcomp').value), 15],
+    ['판매증거',    Number($('dproof').value), 15]
+  ];
+  const total = parts.reduce((a,p) => a+p[1], 0);
+  const g = GRADES.find(([t]) => total >= t);
+  const rivals = Number($('drivals').value)||0;
+  return {parts, total, grade:g, rsum, opportunity: rivals ? rsum/rivals : null};
+}
+function renderVerdict(){
+  const r = score(), [,letter,label,action,color] = r.grade;
+  $('dverdict').innerHTML =
+    '<div class="verdict"><div class="vhead">'
+    + '<div class="badge" style="background:'+color+'">'+letter+'</div>'
+    + '<div class="vscore">'+r.total+'<span> / 100</span></div>'
+    + '<div class="vtext">'+esc(label)+'<em>'+esc(action)+'</em></div></div>'
+    + '<div class="bd">'
+    + r.parts.map(([l,s,m]) =>
+        '<div><span class="l">'+l+'</span><span class="m"><i style="width:'+(s/m*100)+'%"></i></span>'
+        + '<span class="s">'+s+'/'+m+'</span></div>').join('')
+    + (r.opportunity !== null ? '<div style="margin-top:6px"><span class="l">시장기회지수</span>'
+        + '<span class="m"></span><span class="s">'+r.opportunity.toFixed(1)+'</span></div>' : '')
+    + '</div></div>';
+}
+function renderRel(){
+  if(!related.length){
+    $('drel').innerHTML = '<p style="padding:14px;color:var(--muted);font-size:14px;margin:0">연관 키워드가 없습니다.</p>';
+    $('drelsum').textContent = '0'; return;
+  }
+  $('drel').innerHTML = related.map((r,i) =>
+    '<label><input type="checkbox" data-total="'+r.total+'"'+(r.problem?' checked':'')+'>'
+    + '<span>'+esc(r.keyword)+'</span><span class="n">'+fmt(r.total)+'</span></label>').join('');
+  document.querySelectorAll('#drel input').forEach(el => el.addEventListener('change', () => {
+    $('drelsum').textContent = fmt(relSum()); renderVerdict();
+  }));
+  $('drelsum').textContent = fmt(relSum());
+}
+['dvol','dtrend','dintent','dcomp','dproof','drivals'].forEach(id =>
+  document.addEventListener('input', e => { if(e.target.id === id) renderVerdict(); }));
+
+async function analyze(){
+  const kw = $('dkw').value.trim();
+  if(!kw){ $('dkw').focus(); return; }
+  $('dgo').disabled = true; $('dgo').textContent = '분석 중…';
+  try{
+    const d = await search([kw], true);
+    if(d.error){ alert(d.error); return; }
+    const norm = s => s.replace(/\s+/g,'').toUpperCase();
+    const core = d.rows.find(r => norm(r.keyword) === norm(kw)) || d.rows[0];
+    if(!core){ alert('검색량 데이터가 없는 키워드입니다.'); return; }
+
+    $('dvol').value = core.total;
+    if(COMP_MAP[core.comp]) $('dcomp').value = COMP_MAP[core.comp];
+    if(!$('dname').value.trim()) $('dname').value = kw;
+
+    related = d.rows.filter(r => norm(r.keyword) !== norm(core.keyword))
+      .map(r => ({keyword:r.keyword, total:r.total,
+                  problem: PROBLEM.some(p => r.keyword.includes(p))}))
+      .sort((a,b) => (b.problem-a.problem) || (b.total-a.total)).slice(0, 60);
+
+    const t = (d.trends||{})[core.keyword];
+    if(t && t.length > 1){
+      const first = t[0].estimate, last = t[t.length-1].estimate;
+      if(first > 0) $('dtrend').value = ((last-first)/first*100).toFixed(1);
+    }
+    $('dbody').style.display = 'block';
+    renderRel(); renderVerdict();
+  }catch(e){ alert('연결에 실패했습니다. 잠시 뒤 다시 시도해 주세요.'); }
+  finally{ $('dgo').disabled = false; $('dgo').textContent = '분석'; }
+}
+$('dgo').addEventListener('click', analyze);
+$('dkw').addEventListener('keydown', e => { if(e.key==='Enter') analyze(); });
+
+/* 저장 목록 */
+const KEY = 'demand-list-v1';
+const load = () => { try{ return JSON.parse(localStorage.getItem(KEY)) || []; }catch(e){ return []; } };
+const save = list => { try{ localStorage.setItem(KEY, JSON.stringify(list)); }catch(e){} };
+function renderList(){
+  const list = load();
+  if(!list.length){ $('dlist').innerHTML = ''; return; }
+  const avg = (list.reduce((a,x)=>a+x.total,0)/list.length).toFixed(1);
+  const ab = list.filter(x => x.grade === 'A' || x.grade === 'B').length;
+  $('dlist').innerHTML = '<div class="sec">저장한 제품 '+list.length+'개 · 평균 '+avg+'점 · A/B등급 '+ab+'개</div>'
+    + '<table class="saved"><thead><tr><th>제품</th><th>키워드</th><th style="text-align:right">검색량</th>'
+    + '<th style="text-align:right">점수</th><th>등급</th><th></th></tr></thead><tbody>'
+    + list.map((x,i) => {
+        const c = (GRADES.find(g => g[1] === x.grade)||[])[4] || 'var(--gD)';
+        return '<tr><td>'+esc(x.name)+'</td><td style="color:var(--muted)">'+esc(x.keyword)+'</td>'
+          + '<td class="num">'+fmt(x.vol)+'</td><td class="num">'+x.total+'</td>'
+          + '<td><span class="gtag" style="background:'+c+'">'+x.grade+'</span></td>'
+          + '<td style="text-align:right"><button class="del" data-i="'+i+'" title="삭제">×</button></td></tr>';
+      }).join('') + '</tbody></table>';
+  document.querySelectorAll('.del').forEach(b => b.addEventListener('click', () => {
+    const l = load(); l.splice(Number(b.dataset.i), 1); save(l); renderList();
+  }));
+}
+$('dsave').addEventListener('click', () => {
+  const r = score();
+  const list = load();
+  list.unshift({name: $('dname').value.trim() || $('dkw').value.trim(),
+                keyword: $('dkw').value.trim(), vol: Number($('dvol').value)||0,
+                total: r.total, grade: r.grade[1]});
+  save(list.slice(0, 100)); renderList();
+});
+renderList();
 </script>
 </body>
 </html>
