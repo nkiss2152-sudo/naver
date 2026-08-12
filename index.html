@@ -63,13 +63,22 @@ button.ghost:hover{border-color:var(--ink)}
 .trend{margin-top:30px;padding-top:22px;border-top:1px solid var(--line)}
 .trend h2{font-size:14px;font-weight:700;margin:0 0 2px}
 .trend .note{font-size:12px;color:var(--muted);margin:0 0 14px}
+.chart{position:relative}
 .cols{display:flex;align-items:flex-end;gap:4px;height:104px}
-.col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
-.col .b{background:var(--pc);border-radius:3px 3px 0 0;min-height:2px}
+.col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;cursor:default}
+.col .b{background:var(--pc);border-radius:3px 3px 0 0;min-height:2px;transition:opacity .12s}
+.col:hover .b{opacity:.55}
 .col .v{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;margin-bottom:4px}
 .months{display:flex;gap:4px;margin-top:6px}
-.months span{flex:1;font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center}
+.months span{flex:1;font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;
+  white-space:nowrap;overflow:hidden}
+.months span.q{color:var(--line)}
 .peak .b{background:var(--mobile)}
+.tip{position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-100%);
+  background:var(--ink);color:#fff;border-radius:6px;padding:6px 10px;white-space:nowrap;
+  font-size:12px;line-height:1.45;transition:opacity .12s;z-index:5}
+.tip b{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+.tip i{display:block;font-style:normal;color:#B9BDC6;font-size:11px}
 
 .state{padding:40px 0;color:var(--muted);font-size:15px;line-height:1.7}
 .state.error{color:var(--warn)}
@@ -270,21 +279,32 @@ function renderTrends(trends, stats){
         + '</div>').join('') + '</div>';
     }
 
+    const avg = Math.round(series.reduce((a,p) => a + p.estimate, 0) / series.length);
     const bars = series.map(p => {
       const h = Math.max(2, Math.round(p.estimate / max * 88));
       const isPeak = p.month === peak.month;
-      return '<div class="col' + (isPeak ? ' peak' : '') + '" title="'
-        + esc(p.month) + ' 약 ' + fmt(p.estimate) + '회">'
+      const diff = avg ? Math.round((p.estimate - avg) / avg * 100) : 0;
+      return '<div class="col' + (isPeak ? ' peak' : '') + '"'
+        + ' data-m="' + esc(p.month) + '" data-v="' + fmt(p.estimate) + '"'
+        + ' data-d="' + (diff > 0 ? '+' : '') + diff + '">'
         + '<div class="b" style="height:' + h + 'px"></div></div>';
     }).join('');
-    const labels = series.map((p,i) =>
-      '<span>' + (p.month.slice(5) === '01' || i === series.length-1
-        ? esc(p.month.slice(2,4)) : '') + '</span>').join('');
+    // 36개 전부 쓰면 겹치므로 분기(1·4·7·10월)만. 1월은 연도까지 붙인다.
+    const labels = series.map(p => {
+      const mm = p.month.slice(5);
+      if(mm === '01') return '<span>' + esc(p.month.slice(2,4)) + '.1</span>';
+      if(mm === '04' || mm === '07' || mm === '10')
+        return '<span class="q">' + Number(mm) + '</span>';
+      return '<span></span>';
+    }).join('');
 
     return '<div class="trend"><h2>' + esc(kw) + ' 검색량 추이</h2>'
-      + '<p class="note">' + series.length + '개월치를 현재 검색량 기준으로 환산한 추정치입니다.</p>'
+      + '<p class="note">' + series.length + '개월치를 현재 검색량 기준으로 환산한 추정치입니다. '
+      + '월 평균 ' + fmt(avg) + '회. 막대에 마우스를 올리면 그 달의 값이 나옵니다.</p>'
       + head
-      + '<div class="cols">' + bars + '</div><div class="months">' + labels + '</div></div>';
+      + '<div class="chart"><div class="cols">' + bars + '</div>'
+      + '<div class="months">' + labels + '</div>'
+      + '<div class="tip"></div></div></div>';
   }).join('');
 }
 
@@ -485,6 +505,29 @@ $('dsave').addEventListener('click', () => {
 });
 renderList();
 
+
+/* ───────── 추이 차트 툴팁 ───────── */
+document.addEventListener('mouseover', e => {
+  const col = e.target.closest('.col');
+  if(!col) return;
+  const chart = col.closest('.chart');
+  const tip = chart && chart.querySelector('.tip');
+  if(!tip) return;
+  const [y, m] = col.dataset.m.split('-');
+  tip.innerHTML = '<b>' + col.dataset.v + '회</b>'
+    + '<i>' + y + '년 ' + Number(m) + '월 · 평균 대비 ' + col.dataset.d + '%</i>';
+  const cb = chart.getBoundingClientRect(), bb = col.getBoundingClientRect();
+  tip.style.left = (bb.left - cb.left + bb.width / 2) + 'px';
+  tip.style.top  = (bb.top - cb.top - 6) + 'px';
+  tip.style.opacity = '1';
+});
+document.addEventListener('mouseout', e => {
+  const col = e.target.closest('.col');
+  if(!col) return;
+  const chart = col.closest('.chart');
+  const tip = chart && chart.querySelector('.tip');
+  if(tip) tip.style.opacity = '0';
+});
 
 /* ───────── 미해결 신호 ───────── */
 function ustate(msg, err){
