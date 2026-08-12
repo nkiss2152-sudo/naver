@@ -607,47 +607,49 @@ function ustate(msg, err){
 }
 
 function urender(d){
-  const max = Math.max.apply(null, d.axes.map(a => a.count)) || 1;
-  const axes = d.axes.filter(a => a.count > 0).map(a => {
-    const li = a.samples.map(sm =>
-      '<li><b>['+esc(sm.source)+']</b> <a href="'+esc(sm.link)+'" target="_blank" rel="noopener">'
-      + esc(sm.title) + '</a></li>').join('');
-    return '<div class="axis"><div class="ah"><span class="an">'+esc(a.name)+'</span>'
-      + '<span class="ac">'+a.count+'건 / '+d.doc_count+'</span></div>'
-      + '<div class="abar"><i style="width:'+(a.count/max*100)+'%"></i></div>'
-      + (li ? '<ul>'+li+'</ul>' : '') + '</div>';
-  }).join('');
+  const srcs = Object.keys(d.totals||{}).map(k => esc(k)+' '+fmt(d.totals[k])+'건').join(' · ');
+  const hasAI = d.ai && d.ai.items && d.ai.items.length;
 
-  const srcs = Object.keys(d.totals).map(k => esc(k)+' '+fmt(d.totals[k])+'건').join(' · ');
-  const top = d.axes.find(a => a.count > 0);
+  // 사전으로 잡은 축은 AI 결과가 없을 때만 보조로 보여준다
+  let fallback = '';
+  if(!hasAI){
+    const shown = (d.axes||[]).filter(a => a.count > 0);
+    const max = Math.max.apply(null, shown.map(a => a.count).concat([1]));
+    fallback = shown.length
+      ? '<div class="sec" style="margin-top:24px">표현으로 훑은 결과 <span class="hint" '
+        + 'style="font-weight:400">AI 분석이 없어 참고용으로만 보세요</span></div>'
+        + shown.map(a =>
+            '<div class="axis"><div class="ah"><span class="an">'+esc(a.name)+'</span>'
+            + '<span class="ac">'+a.count+'건 / '+d.doc_count+'</span></div>'
+            + '<div class="abar"><i style="width:'+(a.count/max*100)+'%"></i></div>'
+            + '<ul>'+a.samples.map(sm =>
+                '<li><b>['+esc(sm.source)+']</b> <a href="'+esc(sm.link)+'" target="_blank" '
+                + 'rel="noopener">'+esc(sm.title)+'</a></li>').join('')+'</ul></div>').join('')
+      : '';
+  }
 
   $('uout').innerHTML =
-    '<div class="gsum">불만 글 '+d.doc_count+'개를 찾았습니다. 이 키워드의 지식iN 전체 질문은 '+srcs+'.<br>'
-    + (top ? '가장 많이 걸린 불만은 <b>'+esc(top.name)+'</b>('+top.count+'건)입니다. ' : '')
-    + '시판 제품 대신 직접 만들어 쓰는 얘기가 <b>'+d.diy_ratio+'%</b>, '
-    + '아직 답을 못 찾았다는 표현이 <b>'+d.unsolved_ratio+'%</b>입니다.</div>'
-    + '<div class="tstat">'
-    + '<div><div class="lbl">자가 해법 언급</div><div class="val'+(d.diy_ratio>=25?' up':'')+'">'
-    +   d.diy+'건 · '+d.diy_ratio+'%</div></div>'
-    + '<div><div class="lbl">미해결 표현</div><div class="val'+(d.unsolved_ratio>=25?' up':'')+'">'
-    +   d.unsolved+'건 · '+d.unsolved_ratio+'%</div></div>'
-    + '</div>'
-    + axes
+    '<div class="gsum">글 '+d.doc_count+'개를 읽었습니다. 이 키워드의 네이버 전체 결과는 '+srcs+'.'
+    + (d.dropped ? ' 무관한 글 '+d.dropped+'개는 걸러냈습니다.' : '') + '</div>'
     + aiHtml(d)
+    + fallback
     + candHtml(d)
     + '<p style="font-size:12px;color:var(--muted);line-height:1.7;margin-top:20px;padding-top:16px;'
-    + 'border-top:1px solid var(--line)">표현이 들어간 글을 센 것이라 문맥까지 판단하지는 못합니다. '
-    + '"효과가 없다"는 글이 많다고 해서 모두가 불만이라는 뜻은 아닙니다. '
-    + '숫자는 어디를 먼저 읽어볼지 알려주는 지표이고, 제목을 눌러 원문을 직접 확인하세요. '
-    + '자가 해법 비율이 높으면 시판 제품이 그 지점을 못 채우고 있다는 신호일 수 있습니다.</p>';
+    + 'border-top:1px solid var(--line)">카페·블로그에는 할인 정보나 공동구매 글이 섞여 있습니다. '
+    + 'AI가 그런 글을 빼고 정리하지만 완벽하지는 않으니, 항목의 근거를 보고 판단하세요. '
+    + '아래 단어 목록은 글에 자주 나온 말을 센 것으로, 새로운 각도를 찾을 때 참고하세요.</p>';
 }
 
 function aiHtml(d){
   if(d.ai_error) return '<p class="state error" style="padding:14px 0">'+esc(d.ai_error)+'</p>';
+  if(d.ai && d.ai.items && !d.ai.items.length)
+    return '<p class="state" style="padding:20px 0">AI가 읽어본 결과, 이 키워드에는 '
+      + '판매·홍보 글이 대부분이고 뚜렷한 불만은 찾지 못했습니다. 더 구체적인 키워드로 '
+      + '시도해 보세요. (예: 세탁세제 → 실내건조 세탁세제)</p>';
   if(!d.ai || !d.ai.items || !d.ai.items.length) return '';
   const t = d.ai.tokens || {};
   const won = ((t.in||0)/1e6*1 + (t.out||0)/1e6*5) * 1400;
-  return '<div class="sec" style="margin-top:24px">AI가 정리한 미해결 문제</div>'
+  return '<div class="sec" style="margin-top:24px">미해결 문제 <span class="hint" style="font-weight:400">AI가 글을 읽고 정리했습니다</span></div>'
     + d.ai.items.map(it =>
         '<div class="aibox"><div class="an">'+esc(it.name)+'</div>'
         + '<p class="ap">'+esc(it.problem||'')+'</p>'

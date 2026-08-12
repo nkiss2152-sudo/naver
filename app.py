@@ -492,7 +492,7 @@ def analyze_complaints(keyword):
     if not all(datalab_credentials()):
         return None
 
-    key = "UNMET6:" + normalize(keyword).upper()
+    key = "UNMET7:" + normalize(keyword).upper()
     cached = cache_get(key)
     if cached:
         return cached
@@ -565,6 +565,7 @@ def analyze_complaints(keyword):
         "unsolved_ratio": round(unsolved / len(docs) * 100),
         "misses": misses,
         "candidates": extract_candidates(docs, keyword),
+        "titles": [d["title"] + " — " + d["text"][:70] for d in docs][:80],
     }
     cache_put(key, result)
     return result
@@ -643,20 +644,26 @@ def ai_review(keyword, candidates, samples):
         return None
 
     lines = "\n".join("- {} ({}회)".format(c["phrase"], c["count"]) for c in candidates)
-    quotes = "\n".join("- " + s[:100] for s in samples[:25])
+    quotes = "\n".join("- " + s[:110] for s in samples[:70])
     prompt = (
-        "다음은 '{kw}' 제품에 대해 네이버 지식iN·카페·블로그에 올라온 글에서 "
-        "자주 나온 표현과 실제 문장이다.\n\n"
-        "[자주 나온 표현]\n{lines}\n\n[실제 문장 일부]\n{quotes}\n\n"
-        "이 중에서 **사용자가 겪는 불만이나 아직 해결되지 않은 문제**만 골라 "
-        "3~7개 항목으로 묶어라. 다음은 제외한다: 단순 추천 요청, 제품 홍보, "
-        "구매처 문의, 제품의 장점.\n\n"
-        "각 항목은 이 JSON 형식으로만 답하라. 설명이나 마크다운 없이 JSON 배열만:\n"
-        '[{{"name":"항목 이름(10자 이내)",'
-        '"problem":"무엇이 왜 문제인지 한 문장",'
-        '"evidence":"근거가 된 표현들",'
+        "너는 생활용품 상품기획자다. 아래는 '{kw}'로 네이버 지식iN·카페·블로그를 "
+        "검색해 모은 글의 제목과 요약, 그리고 자주 등장한 단어다.\n\n"
+        "[자주 나온 단어]\n{lines}\n\n[글 제목·요약]\n{quotes}\n\n"
+        "이 중에서 **사용자가 실제로 겪는 불편이나 아직 안 풀린 문제**만 찾아 "
+        "3~6개 항목으로 묶어라.\n\n"
+        "반드시 제외할 것:\n"
+        "- 할인/특가/공동구매/중고거래/나눔 등 판매·홍보 글\n"
+        "- 협찬 리뷰, 제품 소개, 브랜드 광고\n"
+        "- 단순 추천 요청('어떤 게 좋나요')\n"
+        "- 구매처·가격 문의\n"
+        "- 해당 제품과 무관한 글\n\n"
+        "각 항목은 아래 JSON 형식으로만 답하라. 설명이나 마크다운 없이 JSON 배열만:\n"
+        '[{{"name":"항목 이름(12자 이내)",'
+        '"problem":"무엇이 왜 문제인지 한 문장. 근거 없이 추측하지 말 것",'
+        '"evidence":"근거가 된 글 제목이나 단어",'
         '"idea":"이 문제를 풀 제품 방향 한 문장"}}]\n\n'
-        "진짜 불만이 없으면 빈 배열 [] 을 반환하라."
+        "근거가 약하면 억지로 만들지 말고 항목 수를 줄여라. "
+        "판매·홍보 글밖에 없으면 빈 배열 [] 을 반환하라."
     ).format(kw=keyword, lines=lines, quotes=quotes)
 
     res = requests.post(
@@ -838,13 +845,12 @@ def api_unmet():
         return jsonify({"error": "관련 글을 찾지 못했습니다. 다른 키워드로 시도해 보세요."}), 404
 
     if body.get("ai") and os.getenv("ANTHROPIC_API_KEY"):
-        ai_key = "AI:" + normalize(keyword).upper()
+        ai_key = "AI2:" + normalize(keyword).upper()
         cached_ai = cache_get(ai_key)
         if cached_ai:
             result["ai"] = cached_ai
         else:
-            samples = [d["title"] + " " + d["text"] for d in result.get("misses", [])]
-            samples += [s["title"] for a in result["axes"] for s in a["samples"]]
+            samples = result.get("titles", [])
             try:
                 reviewed = ai_review(keyword, result.get("candidates", []), samples)
             except RuntimeError as exc:
