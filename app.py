@@ -88,7 +88,7 @@ def init_db():
 def cache_get(key):
     if key.startswith("TREND:"):
         ttl = TREND_TTL
-    elif key.startswith("UNMET"):
+    elif key.startswith("UNMET") or key.startswith("AI:"):
         ttl = SEARCH_TTL
     else:
         ttl = CACHE_TTL
@@ -564,12 +564,160 @@ def analyze_complaints(keyword):
         "diy_ratio": round(diy / len(docs) * 100),
         "unsolved_ratio": round(unsolved / len(docs) * 100),
         "misses": misses,
+        "candidates": extract_candidates(docs, keyword),
     }
     cache_put(key, result)
     return result
 
 
+# ------------------------------------------------------------------ 항목 자동 추출 + AI 검수
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+AI_MODEL = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
+AI_TTL = int(os.getenv("AI_TTL", 259200))     # 3일
+CAND_MAX = 30                                  # AI 에 넘길 후보 표현 수
+
+# 통계로 후보를 뽑을 때 걸러낼 말들 — 불만과 무관한 흔한 단어
+STOP_WORDS = set("""
+추천 문의 질문 어디 무엇 그리고 하지만 그래서 있는 없는 하는 되는 같은 위한 대한
+사용 제품 구매 가격 브랜드 정품 배송 후기 리뷰 사진 정보 방법 요즘 요새 이번 저희
+캠핑 부탁 드립니다 합니다 입니다 인가요 일까요 감사 안녕 여기 저기 이거 그거
+""".split())
+
+
+# 조사·어미를 떼어내 같은 말을 하나로 모은다. 한국어는 이걸 안 하면
+# "각도 고정이" / "각도 고정도" 가 서로 다른 표현으로 세어진다.
+JOSA = ("이었", "였", "으로", "로서", "로써", "에서", "에게", "한테", "까지", "부터",
+        "이라", "라고", "이나", "나마", "든지", "이며", "하고",
+        "은", "는", "이", "가", "을", "를", "의", "에", "도", "만", "과", "와", "랑")
+TAIL = ("습니다", "합니다", "됩니다", "입니다", "하네요", "하더라", "더라구요", "던데요",
+        "어요", "아요", "예요", "네요", "구요", "지요", "세요", "가요", "나요", "까요",
+        "했다", "한다", "된다", "이다", "해요", "돼요", "죠", "요", "다", "음", "함")
+
+
+def stem(word):
+    """조사·어미를 한 번씩 떼어낸다. 형태소 분석기 없이 쓰는 근사치."""
+    for t in TAIL:
+        if len(word) > len(t) + 1 and word.endswith(t):
+            word = word[: -len(t)]
+            break
+    for j in JOSA:
+        if len(word) > len(j) + 1 and word.endswith(j):
+            word = word[: -len(j)]
+            break
+    return word
+
+
+def extract_candidates(docs, keyword):
+    """글에서 자주 나오는 말을 뽑는다. 제품마다 다른 항목이 여기서 나온다."""
+    from collections import Counter
+    kw_norm = normalize(keyword)
+    kw_chars = set(kw_norm)
+    counter, where = Counter(), {}
+
+    for d in docs:
+        text = re.sub(r"[^가-힣0-9a-zA-Z ]", " ", d["title"] + " " + d["text"])
+        seen = set()
+        for raw in text.split():
+            w = stem(raw)
+            if not (2 <= len(w) <= 6) or w in STOP_WORDS:
+                continue
+            if normalize(w) in kw_norm:       # 키워드 자체는 뺀다
+                continue
+            # 키워드 글자만으로 이뤄진 말도 뺀다 ('캠핑', '의자')
+            if set(w) <= kw_chars:
+                continue
+            if w in seen:                     # 한 글에서 여러 번 나와도 1회
+                continue
+            seen.add(w)
+            counter[w] += 1
+            where.setdefault(w, d["title"])
+
+    return [{"phrase": p, "count": c, "sample": where.get(p, "")}
+            for p, c in counter.most_common(CAND_MAX) if c >= 2]
+
+
+def ai_review(keyword, candidates, samples):
+    """후보 표현 중 진짜 불만만 AI 가 고르고 묶는다."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key or not candidates:
+        return None
+
+    lines = "\n".join("- {} ({}회)".format(c["phrase"], c["count"]) for c in candidates)
+    quotes = "\n".join("- " + s[:100] for s in samples[:25])
+    prompt = (
+        "다음은 '{kw}' 제품에 대해 네이버 지식iN·카페·블로그에 올라온 글에서 "
+        "자주 나온 표현과 실제 문장이다.\n\n"
+        "[자주 나온 표현]\n{lines}\n\n[실제 문장 일부]\n{quotes}\n\n"
+        "이 중에서 **사용자가 겪는 불만이나 아직 해결되지 않은 문제**만 골라 "
+        "3~7개 항목으로 묶어라. 다음은 제외한다: 단순 추천 요청, 제품 홍보, "
+        "구매처 문의, 제품의 장점.\n\n"
+        "각 항목은 이 JSON 형식으로만 답하라. 설명이나 마크다운 없이 JSON 배열만:\n"
+        '[{{"name":"항목 이름(10자 이내)",'
+        '"problem":"무엇이 왜 문제인지 한 문장",'
+        '"evidence":"근거가 된 표현들",'
+        '"idea":"이 문제를 풀 제품 방향 한 문장"}}]\n\n'
+        "진짜 불만이 없으면 빈 배열 [] 을 반환하라."
+    ).format(kw=keyword, lines=lines, quotes=quotes)
+
+    res = requests.post(
+        ANTHROPIC_URL,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": AI_MODEL,
+            "max_tokens": 1500,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=60,
+    )
+    if res.status_code in (401, 403):
+        raise RuntimeError("AI 검수 인증에 실패했습니다. 운영자에게 알려주세요.")
+    if res.status_code == 429:
+        raise RuntimeError("AI 호출이 몰리고 있습니다. 잠시 뒤 다시 시도하세요.")
+    res.raise_for_status()
+
+    body = res.json()
+    text = "".join(b.get("text", "") for b in body.get("content", []) if b.get("type") == "text")
+    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    try:
+        items = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(items, list):
+        return None
+
+    usage = body.get("usage", {})
+    return {
+        "items": [i for i in items if isinstance(i, dict) and i.get("name")][:7],
+        "tokens": {"in": usage.get("input_tokens", 0), "out": usage.get("output_tokens", 0)},
+    }
+
+
 # ------------------------------------------------------------------ 라우트
+
+# ------------------------------------------------------------------ 접근 제한
+ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "")
+
+
+def check_access():
+    """비밀번호가 설정돼 있으면 헤더로 확인한다. 없으면 누구나 통과."""
+    if not ACCESS_PASSWORD:
+        return True
+    sent = request.headers.get("X-Access-Password", "")
+    return hmac.compare_digest(sent, ACCESS_PASSWORD)
+
+
+@app.post("/api/login")
+def api_login():
+    body = request.get_json(silent=True) or {}
+    ok = (not ACCESS_PASSWORD) or hmac.compare_digest(
+        str(body.get("password", "")), ACCESS_PASSWORD)
+    return jsonify({"ok": ok}), (200 if ok else 401)
+
+
 @app.get("/")
 def index():
     return send_from_directory(BASE_DIR, "index.html")
@@ -577,11 +725,18 @@ def index():
 
 @app.get("/healthz")
 def healthz():
-    return jsonify({"ok": all(credentials()), "trend": all(datalab_credentials())})
+    return jsonify({
+        "ok": all(credentials()),
+        "trend": all(datalab_credentials()),
+        "ai": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "locked": bool(ACCESS_PASSWORD),
+    })
 
 
 @app.post("/api/search")
 def api_search():
+    if not check_access():
+        return jsonify({"error": "비밀번호가 필요합니다.", "auth": True}), 401
     if not all(credentials()):
         return jsonify({"error": "서버가 아직 설정되지 않았습니다. 운영자에게 알려주세요."}), 503
 
@@ -660,6 +815,8 @@ def api_search():
 
 @app.post("/api/unmet")
 def api_unmet():
+    if not check_access():
+        return jsonify({"error": "비밀번호가 필요합니다.", "auth": True}), 401
     if not all(datalab_credentials()):
         return jsonify({"error": "검색 API가 아직 설정되지 않았습니다. 운영자에게 알려주세요."}), 503
     if rate_limited(client_ip()):
@@ -679,6 +836,27 @@ def api_unmet():
 
     if not result:
         return jsonify({"error": "관련 글을 찾지 못했습니다. 다른 키워드로 시도해 보세요."}), 404
+
+    if body.get("ai") and os.getenv("ANTHROPIC_API_KEY"):
+        ai_key = "AI:" + normalize(keyword).upper()
+        cached_ai = cache_get(ai_key)
+        if cached_ai:
+            result["ai"] = cached_ai
+        else:
+            samples = [d["title"] + " " + d["text"] for d in result.get("misses", [])]
+            samples += [s["title"] for a in result["axes"] for s in a["samples"]]
+            try:
+                reviewed = ai_review(keyword, result.get("candidates", []), samples)
+            except RuntimeError as exc:
+                result["ai_error"] = str(exc)
+                reviewed = None
+            except requests.RequestException:
+                result["ai_error"] = "AI 서버와 통신하지 못했습니다."
+                reviewed = None
+            if reviewed:
+                cache_put(ai_key, reviewed)
+                result["ai"] = reviewed
+
     return jsonify(result)
 
 

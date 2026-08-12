@@ -22,6 +22,12 @@ services:
         sync: false
       - key: NAVER_CLIENT_SECRET
         sync: false
+      # 사내 전용 접근 비밀번호. 비워두면 누구나 접속 가능.
+      - key: ACCESS_PASSWORD
+        sync: false
+      # AI 검수용 (console.anthropic.com). 비워두면 AI 기능만 꺼짐.
+      - key: ANTHROPIC_API_KEY
+        sync: false
       - key: CACHE_TTL
         value: "86400"
       - key: RATE_WINDOW
@@ -34,5 +40,7 @@ services:
         value: "36"
       - key: TREND_TTL
         value: "604800"
+      - key: AI_MODEL
+        value: "claude-haiku-4-5-20251001"
       - key: PYTHON_VERSION
         value: "3.12.6"

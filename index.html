@@ -107,6 +107,27 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
 .yrow .yb i{display:block;height:100%;background:var(--pc)}
 .yrow .yb i.part{background:repeating-linear-gradient(45deg,var(--pc),var(--pc) 4px,#8AA3E8 4px,#8AA3E8 8px)}
 .yrow .yv{font-family:"IBM Plex Mono",monospace;width:92px;text-align:right;font-variant-numeric:tabular-nums}
+.lock{position:fixed;inset:0;background:var(--paper);z-index:50;display:none;
+  align-items:center;justify-content:center;padding:20px}
+.lock.on{display:flex}
+.lock .box{max-width:340px;width:100%}
+.lock h2{font-size:20px;margin:0 0 6px}
+.lock p{font-size:14px;color:var(--muted);margin:0 0 18px}
+.lock .row{display:flex;gap:8px}
+.lock input{flex:1}
+.lock .err{color:var(--warn);font-size:13px;margin-top:10px;display:none}
+.lock .err.on{display:block}
+
+.aibox{border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:10px;background:var(--card)}
+.aibox .an{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.aibox .ap{font-size:14px;line-height:1.65;margin:8px 0 0}
+.aibox .ae{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px}
+.aibox .ai-idea{font-size:13px;line-height:1.6;margin-top:10px;padding-top:10px;
+  border-top:1px dashed var(--line);color:var(--mobile)}
+.aibox .ai-idea b{color:var(--mobile)}
+.cands{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.cands span{font-size:12px;font-family:var(--mono);color:var(--muted);
+  border:1px solid var(--line);border-radius:20px;padding:3px 10px;background:var(--card)}
 .axis{border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:10px;background:var(--card)}
 .axis .ah{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .axis .an{font-size:15px;font-weight:600}
@@ -155,6 +176,16 @@ table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric
 </style>
 </head>
 <body>
+<div class="lock" id="lock"><div class="box">
+  <h2>사내 전용</h2>
+  <p>이용하려면 비밀번호를 입력하세요.</p>
+  <div class="row">
+    <input type="password" id="pw" placeholder="비밀번호" autocomplete="current-password">
+    <button class="go" id="pwgo">확인</button>
+  </div>
+  <p class="err" id="pwerr">비밀번호가 맞지 않습니다.</p>
+</div></div>
+
 <div class="wrap">
   <p class="eyebrow">네이버 검색광고 · 키워드도구</p>
   <h1>키워드 검색량</h1>
@@ -215,6 +246,8 @@ table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric
       <label for="ukw">제품 키워드</label>
       <input type="text" id="ukw" placeholder="예: 신발 탈취제" maxlength="30">
     </div>
+    <label class="opts" style="margin:12px 0"><input type="checkbox" id="uai" checked>
+      AI가 글을 읽고 진짜 불만만 정리 <span class="hint" style="font-weight:400">(조회당 약 5원)</span></label>
     <button class="go" id="ugo">불만 수집</button>
 
     <div id="uout"></div>
@@ -234,11 +267,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
 }));
 
 async function search(keywords, related){
-  const res = await fetch('/api/search', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({keywords, related})
-  });
-  return res.json();
+  return post('/api/search', {keywords, related});
 }
 
 /* ───────── 검색량 조회 ───────── */
@@ -506,6 +535,49 @@ $('dsave').addEventListener('click', () => {
 renderList();
 
 
+/* ───────── 접근 제한 ───────── */
+let PW = sessionStorage.getItem('pw') || '';
+
+function headers(){
+  const h = {'Content-Type':'application/json'};
+  if(PW) h['X-Access-Password'] = PW;
+  return h;
+}
+
+async function post(url, body){
+  const res = await fetch(url, {method:'POST', headers: headers(), body: JSON.stringify(body)});
+  const d = await res.json();
+  if(res.status === 401 && d.auth){ showLock(); throw new Error('auth'); }
+  return d;
+}
+
+function showLock(){ $('lock').classList.add('on'); setTimeout(()=>$('pw').focus(), 50); }
+
+async function unlock(){
+  const v = $('pw').value;
+  if(!v) return;
+  $('pwgo').disabled = true;
+  try{
+    const res = await fetch('/api/login', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:v})});
+    if(res.ok){
+      PW = v; sessionStorage.setItem('pw', v);
+      $('lock').classList.remove('on'); $('pwerr').classList.remove('on');
+    } else { $('pwerr').classList.add('on'); $('pw').select(); }
+  }catch(e){ $('pwerr').classList.add('on'); }
+  finally{ $('pwgo').disabled = false; }
+}
+$('pwgo').addEventListener('click', unlock);
+$('pw').addEventListener('keydown', e => { if(e.key === 'Enter') unlock(); });
+
+// 시작할 때 잠겨 있는지 확인
+(async () => {
+  try{
+    const h = await fetch('/healthz').then(r => r.json());
+    if(h.locked && !PW) showLock();
+  }catch(e){}
+})();
+
 /* ───────── 추이 차트 툴팁 ───────── */
 document.addEventListener('mouseover', e => {
   const col = e.target.closest('.col');
@@ -561,11 +633,38 @@ function urender(d){
     +   d.unsolved+'건 · '+d.unsolved_ratio+'%</div></div>'
     + '</div>'
     + axes
+    + aiHtml(d)
+    + candHtml(d)
     + '<p style="font-size:12px;color:var(--muted);line-height:1.7;margin-top:20px;padding-top:16px;'
     + 'border-top:1px solid var(--line)">표현이 들어간 글을 센 것이라 문맥까지 판단하지는 못합니다. '
     + '"효과가 없다"는 글이 많다고 해서 모두가 불만이라는 뜻은 아닙니다. '
     + '숫자는 어디를 먼저 읽어볼지 알려주는 지표이고, 제목을 눌러 원문을 직접 확인하세요. '
     + '자가 해법 비율이 높으면 시판 제품이 그 지점을 못 채우고 있다는 신호일 수 있습니다.</p>';
+}
+
+function aiHtml(d){
+  if(d.ai_error) return '<p class="state error" style="padding:14px 0">'+esc(d.ai_error)+'</p>';
+  if(!d.ai || !d.ai.items || !d.ai.items.length) return '';
+  const t = d.ai.tokens || {};
+  const won = ((t.in||0)/1e6*1 + (t.out||0)/1e6*5) * 1400;
+  return '<div class="sec" style="margin-top:24px">AI가 정리한 미해결 문제</div>'
+    + d.ai.items.map(it =>
+        '<div class="aibox"><div class="an">'+esc(it.name)+'</div>'
+        + '<p class="ap">'+esc(it.problem||'')+'</p>'
+        + (it.evidence ? '<div class="ae">근거 · '+esc(it.evidence)+'</div>' : '')
+        + (it.idea ? '<div class="ai-idea"><b>제품 방향</b> — '+esc(it.idea)+'</div>' : '')
+        + '</div>').join('')
+    + '<p style="font-size:11px;color:var(--muted);margin:4px 0 0">이번 분석 비용 약 '
+    + won.toFixed(1) + '원. 같은 키워드는 3일간 다시 호출하지 않습니다.</p>';
+}
+
+function candHtml(d){
+  if(!d.candidates || !d.candidates.length) return '';
+  return '<div class="sec" style="margin-top:24px">글에서 자주 나온 말</div>'
+    + '<div class="cands">'
+    + d.candidates.slice(0,24).map(c =>
+        '<span>'+esc(c.phrase)+' '+c.count+'</span>').join('')
+    + '</div>';
 }
 
 let ubusy = false;
@@ -576,9 +675,7 @@ async function findUnmet(){
   ubusy = true; $('ugo').disabled = true; $('ugo').textContent = '수집 중…';
   ustate('지식iN·카페·블로그에서 글을 모으는 중입니다…');
   try{
-    const res = await fetch('/api/unmet', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({keyword:kw})});
-    const d = await res.json();
+    const d = await post('/api/unmet', {keyword:kw, ai: $('uai').checked});
     if(d.error) ustate(d.error, true);
     else if(!d.axes.some(a => a.count > 0))
       ustate('불만 표현이 거의 없습니다. 더 구체적인 제품 키워드로 시도해 보세요.');
