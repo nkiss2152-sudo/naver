@@ -139,7 +139,9 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-si
 .axis li a{color:var(--muted);text-decoration:none;border-bottom:1px dotted var(--line)}
 .axis li a:hover{color:var(--pc);border-color:var(--pc)}
 .axis li b{color:var(--ink);font-weight:600}
-  border:1px solid var(--line);border-radius:20px;padding:2px 8px}
+.gate{font-size:13px;line-height:1.6;border-radius:8px;padding:10px 12px;margin-bottom:16px}
+.gate.ok{background:#E8F4EE;color:#0F6642;border:1px solid #C3E3D3}
+.gate.no{background:#FBEEEA;color:#8E3520;border:1px solid #F0D3C9}
 .gsum{font-size:13px;color:var(--muted);line-height:1.7;margin:16px 0 12px}
 .rel{max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:9px;background:var(--card);padding:4px}
 .rel label{display:flex;align-items:center;gap:10px;padding:8px 10px;font-size:14px;border-radius:6px;cursor:pointer}
@@ -213,11 +215,18 @@ table.saved td.num{font-family:var(--mono);text-align:right;font-variant-numeric
 
   <!-- ── 수요판단 ─────────────────────────────── -->
   <div class="panel" id="p-demand">
-    <p class="sub" style="margin-top:-8px">제품 키워드 하나만 넣으면 나머지는 전부 자동으로 수집·계산해 등급을 매깁니다.</p>
+    <p class="sub" style="margin-top:-8px">제품 키워드 하나만 넣으면 나머지는 전부 자동으로 수집·계산해 등급을 매깁니다.
+      월 검색량이 <b id="dbaseecho">10,000</b>회를 넘으면 <b>수요 있음</b>으로 봅니다.</p>
 
-    <div class="field">
-      <label for="dkw">제품 키워드</label>
-      <input type="text" id="dkw" placeholder="예: 신발 탈취제" maxlength="30">
+    <div class="grid2">
+      <div class="field">
+        <label for="dkw">제품 키워드</label>
+        <input type="text" id="dkw" placeholder="예: 신발 탈취제" maxlength="30">
+      </div>
+      <div class="field">
+        <label for="dbase">수요 기준 검색량 <span class="hint">월 기준</span></label>
+        <input type="number" id="dbase" min="100" step="1000" value="10000">
+      </div>
     </div>
     <button class="go" id="dgo">분석</button>
 
@@ -372,49 +381,89 @@ $('q').addEventListener('keydown', e => { if(e.key==='Enter') run(); });
 const PROBLEM = ['방법','없애','제거','해결','원인','안될','고장','심할','너무','대처','예방','완화','줄이','막는','왜'];
 // 구매 직전 단계에서 쓰는 표현. 이 비중이 높을수록 상업적 가치가 큽니다.
 const BUY = ['가격','최저가','추천','후기','순위','구매','파는곳','저렴','판매','리뷰','비교','브랜드','직구'];
-const COMP_SCORE = {'높음':5,'중간':10,'낮음':15};
-const SCALES = {
-  vol:   [[30000,25],[10000,19],[3000,12],[0,6]],
-  rel:   [[50000,20],[20000,15],[5000,10],[0,5]],
-  buy:   [[0.40,15],[0.25,11],[0.12,7],[0,3]],
-  depth: [[15,0],[11,2],[7,5],[3,8],[0,10]],
-  trend: [[30,15],[10,11],[0,6],[-Infinity,0]]
-};
+
+/* ── 수요 기준선 ────────────────────────────────
+   월 검색량이 이 값을 넘으면 "수요 있음"으로 봅니다. 사내 기준은 1만.
+   아래 배점은 전부 이 값의 배수로 계산하므로, 기준을 바꾸면
+   연관 수요 배점까지 같이 따라 움직입니다.                        */
+const BASE_KEY = 'demand-baseline-v1';
+const DEFAULT_BASE = 10000;
+function baseline(){
+  const saved = Number(localStorage.getItem(BASE_KEY));
+  const v = Number($('dbase').value) || saved || DEFAULT_BASE;
+  return v >= 100 ? Math.round(v) : DEFAULT_BASE;
+}
+
+// 경쟁이 높다는 건 그 카테고리에 돈이 돌고 있다는 뜻이기도 합니다.
+// 예전처럼 크게 깎지 않고, 차별화 난이도만큼만 반영합니다.
+const COMP_SCORE = {'높음':6,'중간':9,'낮음':10};
+
+// 검색량·연관 수요는 기준선(B)의 배수로 매깁니다.
+// 기준선을 딱 채우면 25점 만점에 18점 — "통과선"이 만점이 아니라
+// 그 위로 올라갈 여지를 남겨둔 값입니다.
+function scales(B){
+  return {
+    vol:   [[B*10,25],[B*5,23],[B*3,21],[B,18],[B*0.5,10],[B*0.1,5],[0,2]],
+    rel:   [[B*2,20],[B*0.8,16],[B*0.3,12],[B*0.1,8],[0,4]],
+    buy:   [[0.30,15],[0.18,12],[0.08,9],[0,5]],
+    // 광고가 아예 없으면 아직 돈이 안 도는 시장이라 만점은 주지 않습니다.
+    depth: [[15,4],[11,6],[7,9],[3,10],[0,7]],
+    // 1만 이상에서 보합(0% 안팎)은 나쁜 신호가 아닙니다.
+    trend: [[20,15],[5,13],[-5,10],[-20,5],[-Infinity,0]]
+  };
+}
 const pick = (scale, v) => (scale.find(([t]) => v >= t) || [0,0])[1];
 let facts = null;
 const GRADES = [
   [80,'A','최우선 검토','바로 제품기획·원가·샘플 검토','var(--gA)'],
-  [65,'B','유망','테스트 생산 / 시장조사','var(--gB)'],
-  [50,'C','조건부','강한 차별화가 있을 때만 진행','var(--gC)'],
+  [62,'B','유망','테스트 생산 / 시장조사','var(--gB)'],
+  [48,'C','조건부','강한 차별화가 있을 때만 진행','var(--gC)'],
   [0, 'D','보류','우선순위 낮춤','var(--gD)']
 ];
 let related = [];
 
 function score(){
   if(!facts) return null;
+  const B = facts.base, S = scales(B);
   const parts = [
-    ['핵심 검색량', pick(SCALES.vol, facts.vol), 25, fmt(facts.vol)+'회'],
-    ['연관 수요',   pick(SCALES.rel, facts.relSum), 20, fmt(facts.relSum)+'회 · '+facts.relCount+'개'],
-    ['구매의도',    pick(SCALES.buy, facts.buyRatio), 15, '구매형 '+Math.round(facts.buyRatio*100)+'%'],
-    ['경쟁강도',    COMP_SCORE[facts.comp] ?? 10, 15, '경쟁 '+facts.comp],
-    ['광고 포화도', pick(SCALES.depth, facts.depth), 10, '광고 '+facts.depth+'개']
+    ['핵심 검색량', pick(S.vol, facts.vol), 25,
+     fmt(facts.vol)+'회 · 기준 '+fmt(B)+'회의 '+(facts.vol/B).toFixed(1)+'배'],
+    ['연관 수요',   pick(S.rel, facts.relSum), 20,
+     fmt(facts.relSum)+'회 · 문제형 '+facts.relCount+'개'],
+    ['구매의도',    pick(S.buy, facts.buyRatio), 15,
+     '연관 검색량 중 구매형 '+Math.round(facts.buyRatio*100)+'%'],
+    ['경쟁강도',    COMP_SCORE[facts.comp] ?? 9, 10, '경쟁 '+facts.comp],
+    ['광고 포화도', pick(S.depth, facts.depth), 10, '노출 광고 '+facts.depth+'개']
   ];
   if(facts.trend !== null){
-    parts.push(['검색 추세', pick(SCALES.trend, facts.trend), 15,
-                (facts.trend>0?'+':'')+facts.trend.toFixed(1)+'%']);
+    parts.push(['검색 추세', pick(S.trend, facts.trend), 15,
+                (facts.trend>0?'+':'')+facts.trend.toFixed(1)+'% ('+facts.trendLabel+')']);
   }
   const raw = parts.reduce((a,p) => a+p[1], 0);
   const max = parts.reduce((a,p) => a+p[2], 0);
   const total = Math.round(raw / max * 100);
-  return {parts, total, max, grade: GRADES.find(([t]) => total >= t)};
+
+  // 기준선을 못 넘으면 나머지 항목이 좋아도 A·B는 주지 않습니다.
+  // "점수는 괜찮은데 시장이 작다"를 등급으로 구분하기 위한 상한입니다.
+  const pass = facts.vol >= B;
+  let grade = GRADES.find(([t]) => total >= t);
+  if(!pass && (grade[1] === 'A' || grade[1] === 'B')) grade = GRADES[2];
+
+  return {parts, total, max, grade, pass, base: B};
 }
 
 function renderVerdict(){
   const r = score();
   if(!r) return;
   const [,letter,label,action,color] = r.grade;
+  const gate = r.pass
+    ? '<div class="gate ok">수요 기준 통과 — 월 '+fmt(facts.vol)+'회로 기준 '+fmt(r.base)
+      + '회를 '+(facts.vol/r.base).toFixed(1)+'배 넘습니다.</div>'
+    : '<div class="gate no">수요 기준 미달 — 월 '+fmt(facts.vol)+'회로 기준 '+fmt(r.base)
+      + '회에 '+fmt(r.base - facts.vol)+'회 모자랍니다. 다른 항목이 좋아도 C 이상은 주지 않습니다.</div>';
+
   $('dverdict').innerHTML =
-    '<div class="verdict"><div class="vhead">'
+    '<div class="verdict">' + gate + '<div class="vhead">'
     + '<div class="badge" style="background:'+color+'">'+letter+'</div>'
     + '<div class="vscore">'+r.total+'<span> / 100</span></div>'
     + '<div class="vtext">'+esc(label)+'<em>'+esc(action)+'</em></div></div>'
@@ -424,8 +473,12 @@ function renderVerdict(){
         + '<span class="s">'+sc+'/'+m+'</span></div>'
         + '<div style="font-size:11px;color:var(--muted);margin:-2px 0 6px 0">'+esc(dt)+'</div>').join('')
     + '</div>'
+    + (facts.trend !== null && facts.trend <= -20
+        ? '<p style="font-size:12px;color:var(--warn);margin:10px 0 0">검색량이 '
+          + facts.trend.toFixed(1) + '% 줄고 있습니다. 시장 크기는 되지만 빠지는 중이라 '
+          + '진입 시점을 따로 따져보세요.</p>' : '')
     + (facts.trend === null
-        ? '<p style="font-size:12px;color:var(--muted);margin:10px 0 0">검색 추세는 데이터랩 연동 전이라 제외하고 '
+        ? '<p style="font-size:12px;color:var(--muted);margin:10px 0 0">검색 추세는 데이터랩 값이 없어 제외하고 '
           + r.max + '점 만점을 100점으로 환산했습니다.</p>' : '')
     + '</div>';
 }
@@ -434,11 +487,13 @@ function renderFacts(){
   const f = facts;
   $('dfacts').innerHTML = '<div class="grid2">'
     + [['월 검색량', fmt(f.vol)+'회'],
-       ['PC / 모바일', fmt(f.pc)+' / '+fmt(f.mobile)+'  (모바일 '+Math.round(f.mobile/f.vol*100)+'%)'],
+       ['PC / 모바일', fmt(f.pc)+' / '+fmt(f.mobile)
+         + (f.vol ? '  (모바일 '+Math.round(f.mobile/f.vol*100)+'%)' : '')],
        ['경쟁강도', f.comp],
        ['평균 노출 광고수', f.depth+'개'],
        ['연관 키워드', f.totalRel+'개 (문제형 '+f.relCount+'개)'],
-       ['검색 추세', f.trend === null ? '데이터 없음' : (f.trend>0?'+':'')+f.trend.toFixed(1)+'%']
+       ['검색 추세', f.trend === null ? '데이터 없음'
+         : (f.trend>0?'+':'')+f.trend.toFixed(1)+'% ('+f.trendLabel+')']
       ].map(([k,v]) => '<div class="field"><label>'+k+'</label>'
         + '<div style="font-size:15px;padding:2px 0">'+esc(v)+'</div></div>').join('')
     + '</div>';
@@ -477,19 +532,31 @@ async function analyze(){
                        .reduce((a,r) => a + r.total, 0);
     const restSum = rest.reduce((a,r) => a + r.total, 0);
 
-    let trend = null;
-    const t = (d.trends||{})[core.keyword];
-    if(t && t.length > 1 && t[0].estimate > 0){
-      trend = (t[t.length-1].estimate - t[0].estimate) / t[0].estimate * 100;
+    // 추세는 최근 12개월 합 vs 직전 12개월 합(YoY)을 먼저 씁니다.
+    // 36개월 첫 달과 끝 달만 비교하면 그 두 달이 성수기냐 비수기냐에 따라
+    // 값이 통째로 흔들려서, 같은 키워드도 볼 때마다 등급이 달라졌습니다.
+    let trend = null, trendLabel = '';
+    const st = (d.trend_stats||{})[core.keyword];
+    if(st && st.yoy !== null && st.yoy !== undefined){
+      trend = st.yoy; trendLabel = '전년 대비';
+    } else {
+      const t = (d.trends||{})[core.keyword];
+      if(t && t.length > 1){
+        const half = Math.floor(t.length / 2);
+        const older = t.slice(0, half).reduce((a,p) => a + p.estimate, 0);
+        const newer = t.slice(-half).reduce((a,p) => a + p.estimate, 0);
+        if(older > 0){ trend = (newer - older) / older * 100; trendLabel = '기간 전·후반'; }
+      }
     }
 
     facts = {
+      base: baseline(),
       vol: core.total, pc: core.pc, mobile: core.mobile,
       comp: core.comp, depth: core.depth,
       relSum: related.reduce((a,r) => a + r.total, 0),
       relCount: related.length, totalRel: rest.length,
       buyRatio: restSum ? buySum / restSum : 0,
-      trend
+      trend, trendLabel
     };
 
     $('dbody').style.display = 'block';
@@ -500,6 +567,20 @@ async function analyze(){
 }
 $('dgo').addEventListener('click', analyze);
 $('dkw').addEventListener('keydown', e => { if(e.key==='Enter') analyze(); });
+
+/* 기준선 — 입력값을 저장하고, 이미 분석한 결과가 있으면 즉시 다시 채점 */
+(function initBaseline(){
+  const saved = Number(localStorage.getItem(BASE_KEY));
+  if(saved >= 100) $('dbase').value = saved;
+  $('dbaseecho').textContent = fmt($('dbase').value);
+  $('dbase').addEventListener('change', () => {
+    const B = baseline();
+    $('dbase').value = B;
+    $('dbaseecho').textContent = fmt(B);
+    try{ localStorage.setItem(BASE_KEY, String(B)); }catch(e){}
+    if(facts){ facts.base = B; renderVerdict(); }
+  });
+})();
 
 /* 저장 목록 */
 const KEY = 'demand-list-v1';
@@ -527,9 +608,11 @@ function renderList(){
 $('dsave').addEventListener('click', () => {
   const r = score();
   if(!r) return;
-  const list = load();
-  list.unshift({keyword: $('dkw').value.trim(), vol: facts.vol,
-                total: r.total, grade: r.grade[1]});
+  const kw = $('dkw').value.trim();
+  // 같은 키워드를 다시 저장하면 쌓지 않고 최신 결과로 덮어씁니다.
+  const list = load().filter(x => x.keyword !== kw);
+  list.unshift({keyword: kw, vol: facts.vol, total: r.total,
+                grade: r.grade[1], base: r.base});
   save(list.slice(0, 100)); renderList();
 });
 renderList();
