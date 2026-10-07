@@ -88,6 +88,12 @@ a.t:hover{color:var(--pc)}
   border:1px solid var(--line);background:var(--card);color:var(--muted)}
 .acts button:hover{border-color:var(--ink);color:var(--ink)}
 .acts button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.why-box{margin-top:16px;border:1px solid var(--line);border-radius:9px;background:var(--card);padding:10px 14px}
+.why-box summary{cursor:pointer;font-size:14px;font-weight:600}
+.cres{margin-top:10px;font-size:14px;line-height:1.65}
+.cres b{display:inline-block;margin-right:6px}
+.cres .ex{margin-top:6px}
+.tagfull{font-size:11px;color:var(--ok);border:1px solid #C3E3D3;border-radius:5px;padding:0 6px}
 mark{background:#FBE3DC;color:inherit;border-radius:2px;padding:0 1px}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--ink);color:#fff;
   padding:10px 16px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
@@ -137,6 +143,15 @@ footer a{color:var(--muted)}
     </div>
     <label class="opts"><input type="checkbox" id="ai" checked>
       AI가 한 글씩 읽고 진짜 부정글만 고르기 <span style="font-size:12px">(조회당 최대 150원 안팎)</span></label>
+    <details class="why-box">
+      <summary>찾고 있는 글이 안 나와요?</summary>
+      <p class="note" style="margin-top:6px">글 주소를 넣으면 어디서 빠졌는지 알려줍니다. 검색에 안 잡힌 블로그 글은 직접 열어 판정합니다.</p>
+      <div class="bar" style="margin-top:8px">
+        <input type="text" id="curl" placeholder="https://blog.naver.com/…" autocomplete="off">
+        <button class="ghost" id="cgo" style="padding:12px 16px">확인</button>
+      </div>
+      <div id="cout"></div>
+    </details>
     <div id="out"></div>
   </div>
 
@@ -217,6 +232,7 @@ function card(p, i, checked){
     + (p.where ? '<span>'+esc(p.where)+'</span>' : '')
     + (p.date ? '<span>'+fdate(p.date)+'</span>' : '')
     + (p.target ? '<span>· '+esc(p.target)+'</span>' : '')
+    + (p.full ? '<span class="tagfull">본문 읽음</span>' : '')
     + '</div>'
     + '<a class="t" href="'+esc(p.link)+'" target="_blank" rel="noopener">'+mark(p.title, p.hits)+'</a>'
     + (p.text ? '<div class="ex">'+mark(p.text, p.hits)+'</div>' : '')
@@ -254,6 +270,7 @@ function render(){
     + '</div>'
     + '<p class="note">'
     + (d.ai ? 'AI가 글 '+fmt(d.ai_checked)+'개를 읽고 판정했습니다.' : '부정 표현으로만 골랐습니다 (AI 미사용 — 칭찬글이 섞일 수 있음).')
+    + (d.full_read ? ' 블로그 '+fmt(d.full_read)+'개는 본문 전체를 열어 읽었습니다.' : '')
     + (d.dropped ? ' 이름이 안 들어간 글 '+fmt(d.dropped)+'개는 뺐습니다.' : '')
     + ' 조회 '+esc(d.fetched_at)+(d.cached ? ' (6시간 내 같은 조회라 저장된 결과)' : '')
     + (d.ai && won ? ' · 비용 약 '+won.toFixed(0)+'원' : '') + '</p>'
@@ -330,7 +347,7 @@ async function find(){
   const kw = $('kw').value.trim();
   if(!kw){ $('kw').focus(); return; }
   busy = true; $('go').disabled = true; $('go').textContent = '찾는 중…';
-  state($('ai').checked ? '블로그·카페·지식iN에서 글을 모아 AI가 읽는 중입니다… (30초~1분)' : '글을 모으는 중입니다…');
+  state($('ai').checked ? '블로그·카페·지식iN에서 글을 모으고 블로그 본문까지 열어 AI가 읽는 중입니다… (1~2분)' : '글을 모으고 블로그 본문을 여는 중입니다… (1분 안팎)');
   try{
     const d = await post('/api/negative', {keyword: kw, ai: $('ai').checked});
     if(d.error) state(d.error, true);
@@ -340,6 +357,40 @@ async function find(){
 }
 $('go').addEventListener('click', find);
 $('kw').addEventListener('keydown', e => { if(e.key === 'Enter') find(); });
+
+/* ───── 이 글 왜 안 나와? ───── */
+let cbusy = false;
+async function checkUrl(){
+  if(cbusy) return;
+  const kw = $('kw').value.trim(), url = $('curl').value.trim();
+  if(!kw){ $('kw').focus(); return toast('위에 검색어를 먼저 넣으세요'); }
+  if(!url){ $('curl').focus(); return; }
+  cbusy = true; $('cgo').disabled = true; $('cgo').textContent = '확인 중…';
+  $('cout').innerHTML = '<p class="cres" style="color:var(--muted)">확인 중입니다… (최대 20초)</p>';
+  try{
+    const r = await post('/api/neg-check', {keyword: kw, url, ai: $('ai').checked});
+    if(r.error){ $('cout').innerHTML = '<p class="cres" style="color:var(--warn)">'+esc(r.error)+'</p>'; return; }
+    const t = r.trail || {};
+    let h = '<div class="cres"><b>'+esc(r.stage)+'</b>'+esc(r.why)
+      + (t.excerpt ? '<div class="ex">'+(t.full ? '[본문] ' : '[요약] ')+mark(t.excerpt, t.hits)+'</div>' : '');
+    if(r.post){
+      h += '<div class="why">'+esc(r.post.level)+' · '+esc(r.post.reason||'')+'</div>'
+        + '<button class="ghost" id="cadd" style="margin-top:8px">결과 목록에 추가</button>';
+    }
+    $('cout').innerHTML = h + '</div>';
+    if(r.post) $('cadd').addEventListener('click', () => {
+      if(!NEG){ NEG = {keyword: kw, checked: 0, posts: [], by_source: {}, fetched_at: '', tokens: {}}; }
+      if(!NEG.posts.some(p => p.link === r.post.link)){
+        NEG.posts.unshift(r.post);
+        NEG.by_source[r.post.source] = (NEG.by_source[r.post.source]||0) + 1;
+      }
+      fst = '전체'; render(); toast('목록에 추가했습니다');
+    });
+  }catch(e){ if(e.message !== 'auth') $('cout').innerHTML = '<p class="cres" style="color:var(--warn)">연결에 실패했습니다.</p>'; }
+  finally{ cbusy = false; $('cgo').disabled = false; $('cgo').textContent = '확인'; }
+}
+$('cgo').addEventListener('click', checkUrl);
+$('curl').addEventListener('keydown', e => { if(e.key === 'Enter') checkUrl(); });
 
 /* ───── 요청 관리 ───── */
 let tst = '요청함';
