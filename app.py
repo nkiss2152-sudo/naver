@@ -88,6 +88,8 @@ def init_db():
 def cache_get(key):
     if key.startswith("TREND:"):
         ttl = TREND_TTL
+    elif key.startswith("NEG"):
+        ttl = NEG_TTL
     elif key.startswith("UNMET") or key.startswith("AI:"):
         ttl = SEARCH_TTL
     else:
@@ -443,12 +445,12 @@ def strip_tags(text):
         .replace("&lt;", "<").replace("&gt;", ">").replace("&#39;", "'")
 
 
-def search_docs(source, query, display=100):
+def search_docs(source, query, display=100, sort="sim"):
     """API HUB 검색 API. 제목+본문 요약을 돌려준다."""
     client_id, client_secret = datalab_credentials()
     res = requests.get(
         APIHUB_BASE + "/search/v1/" + source,
-        params={"query": query, "display": display, "sort": "sim"},
+        params={"query": query, "display": display, "sort": sort},
         headers={
             "X-NCP-APIGW-API-KEY-ID": client_id,
             "X-NCP-APIGW-API-KEY": client_secret,
@@ -467,6 +469,9 @@ def search_docs(source, query, display=100):
             "title": strip_tags(item.get("title", "")),
             "text": strip_tags(item.get("description", "")),
             "link": item.get("link", ""),
+            # 블로그만 작성일(YYYYMMDD)을 준다. 카페·지식iN은 빈 값.
+            "date": item.get("postdate", "") or "",
+            "where": strip_tags(item.get("bloggername") or item.get("cafename") or ""),
         })
     return docs, body.get("total", 0)
 
@@ -703,6 +708,227 @@ def ai_review(keyword, candidates, samples):
     }
 
 
+# ------------------------------------------------------------------ 부정글 찾기
+# 브랜드·제품·매장 등 무엇이든 넣으면, 그 이름이 나온 글 중 부정적인 글만 골라낸다.
+# 같은 소스를 '최신순' + '정확도순' + '단점 붙인 검색'으로 세 번 훑어 놓치는 글을 줄인다.
+NEG_TTL = int(os.getenv("NEG_TTL", 21600))          # 6시간 — 감시용이라 짧게
+NEG_SOURCES = [("blog", "블로그"), ("cafearticle", "카페"), ("kin", "지식iN")]
+NEG_QUERIES = [("{kw}", "date"), ("{kw}", "sim"), ("{kw} 단점", "sim")]
+NEG_AI_BATCH = 80                                    # AI 한 번에 넘길 글 수
+NEG_AI_MAX = 320                                     # AI 가 읽을 최대 글 수
+
+# (표현, 무게). 무게 3 = 그것만으로 거의 확실한 부정, 1 = 약한 신호.
+NEG_WORDS = [(w, 3) for w in [
+    "사기", "먹튀", "최악", "비추", "절대 사지", "사지 마", "사지마", "불매", "환불 안",
+    "환불을 안", "연락 두절", "연락두절", "고객센터 연결", "답변이 없", "응대가 최악",
+    "불친절", "거짓말", "허위", "과장 광고", "과대광고", "뒷광고", "피해", "신고했",
+    "소비자원", "소보원", "고소", "짝퉁", "가품", "불량", "하자", "벌레가", "곰팡이",
+    "이물질", "머리카락이", "유통기한 지난", "상했", "탈이 났", "부작용", "트러블",
+    "두드러기", "발진", "알레르기", "다쳤", "화상", "폭발", "터졌", "누수", "새요",
+    "돈 아깝", "돈아깝", "돈 버렸", "후회", "실망", "쓰레기", "엉망", "화가 나",
+    "어이없", "황당", "기가 막", "열받", "짜증",
+]] + [(w, 2) for w in [
+    "별로", "비싸기만", "효과 없", "효과없", "효과가 없", "소용없", "고장", "망가",
+    "부러", "찢어", "깨졌", "끊어", "끊겼", "벗겨", "녹슬", "변색", "냄새가 심", "역해", "반품", "환불", "교환 요청", "배송이 늦",
+    "배송 지연", "안 와", "안와요", "누락", "오배송", "파손", "늦장", "답답", "불편",
+    "문제가 있", "문제가 생", "이상해", "이상하", "실패", "단점", "아쉽", "아쉬운",
+    "그저 그", "기대 이하", "생각보다 별", "다시는", "재구매 안", "재구매 의사 없",
+]] + [(w, 1) for w in [
+    "애매", "글쎄", "AS 되나", "as 되나", "a/s", "그닥", "흠", "ㅠㅠ", "ㅜㅜ", "에휴", "하아", "왜 이러", "괜찮은가요",
+    "괜찮을까요", "어떤가요", "논란", "불만", "후기 솔직",
+]]
+# 부정 표현이 있어도 실제로는 칭찬·홍보인 경우를 깎는다
+NEG_SOFTENERS = ["단점이 없", "단점 없", "후회 없", "후회없", "실망 없", "불편함 없",
+                 "불편 없", "별로 없", "걱정 없", "문제 없", "문제없", "해결", "덕분에",
+                 "강추", "추천합니다", "추천해요", "만족", "최고", "협찬", "체험단",
+                 "원고료", "제공받아"]
+
+
+def neg_relevant(doc, keyword):
+    """키워드가 글에 그대로 나오는지. 띄어쓰기는 무시한다.
+    여러 단어면 단어 전부가 나와야 통과 ('명퉤 경주' → 둘 다)."""
+    blob = normalize(doc["title"] + " " + doc["text"]).upper()
+    parts = [normalize(p).upper() for p in keyword.split() if p.strip()]
+    whole = normalize(keyword).upper()
+    return whole in blob or (len(parts) > 1 and all(p in blob for p in parts))
+
+
+def neg_score(doc):
+    """표현 사전으로 부정 점수를 매긴다. AI 가 없을 때 쓰고, AI 가 있어도 순서 정렬에 쓴다."""
+    title, text = doc["title"], doc["text"]
+    blob = title + " " + text
+    score, hits = 0, []
+    for w, weight in NEG_WORDS:
+        if w in blob:
+            score += weight * (2 if w in title else 1)
+            hits.append(w)
+    soft = sum(1 for w in NEG_SOFTENERS if w in blob)
+    score -= soft * 2
+    return max(score, 0), hits[:6]
+
+
+def ai_judge_negative(keyword, docs):
+    """글을 번호 붙여 넘기고, '키워드에 대해' 부정적인 글만 번호로 돌려받는다.
+    반환: ({번호: {level, reason, target}}, 토큰 사용량)"""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key or not docs:
+        return None, {}
+    verdicts, tokens = {}, {"in": 0, "out": 0}
+
+    for start in range(0, len(docs), NEG_AI_BATCH):
+        chunk = docs[start:start + NEG_AI_BATCH]
+        lines = "\n".join(
+            "{}. [{}] {} — {}".format(start + i + 1, d["source"], d["title"], d["text"][:200])
+            for i, d in enumerate(chunk))
+        prompt = (
+            "아래는 네이버 블로그·카페·지식iN에서 '{kw}'가 언급된 글의 제목과 요약이다.\n\n"
+            "{lines}\n\n"
+            "각 글이 **'{kw}' 자체에 대해** 부정적인지 판단하라.\n"
+            "부정으로 볼 것: 불만, 실망, 하자·불량, 피해, 환불·교환 분쟁, 불친절, 효과 없음, "
+            "비추천, 안전 문제 제기, '{kw}' 괜찮은지 의심하는 질문 중 문제를 이미 겪은 글.\n"
+            "부정이 아닌 것: 칭찬·추천, 협찬·체험단 리뷰, 단순 정보·구매 문의, "
+            "다른 제품·가게에 대한 불만을 '{kw}'로 해결했다는 글, '{kw}'와 무관한 글, "
+            "'단점 없어요'처럼 부정어를 써도 결론이 긍정인 글.\n\n"
+            "부정 글만 아래 JSON 배열로 답하라. 설명·마크다운 없이 JSON만:\n"
+            '[{{"n":글번호,"level":"강|중|약","reason":"무엇이 문제인지 25자 이내",'
+            '"target":"불만 대상(제품/배송/응대/가격/매장/기타 중 하나)"}}]\n'
+            "level — 강: 피해·분쟁·강한 비난, 중: 분명한 불만·실망, 약: 아쉬움·의심.\n"
+            "부정 글이 없으면 [] 만 답하라."
+        ).format(kw=keyword, lines=lines)
+
+        res = requests.post(
+            ANTHROPIC_URL,
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": AI_MODEL, "max_tokens": 3000,
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=90,
+        )
+        if res.status_code in (401, 403):
+            raise RuntimeError("AI 판정 인증에 실패했습니다. 운영자에게 알려주세요.")
+        if res.status_code == 429:
+            raise RuntimeError("AI 호출이 몰리고 있습니다. 잠시 뒤 다시 시도하세요.")
+        res.raise_for_status()
+
+        body = res.json()
+        usage = body.get("usage", {})
+        tokens["in"] += usage.get("input_tokens", 0)
+        tokens["out"] += usage.get("output_tokens", 0)
+        text = "".join(b.get("text", "") for b in body.get("content", [])
+                       if b.get("type") == "text")
+        m = re.search(r"\[.*\]", text, flags=re.S)
+        try:
+            items = json.loads(m.group(0)) if m else []
+        except ValueError:
+            items = []
+        for it in items if isinstance(items, list) else []:
+            if not isinstance(it, dict):
+                continue
+            try:
+                n = int(it.get("n"))
+            except (TypeError, ValueError):
+                continue
+            if 1 <= n <= len(docs):
+                level = it.get("level") if it.get("level") in ("강", "중", "약") else "중"
+                verdicts[n - 1] = {"level": level,
+                                   "reason": str(it.get("reason", ""))[:60],
+                                   "target": str(it.get("target", ""))[:10]}
+    return verdicts, tokens
+
+
+def collect_negative(keyword, use_ai):
+    """키워드로 글을 모으고 부정 글만 골라낸다."""
+    key = "NEG1:{}:{}".format("AI" if use_ai else "RAW", normalize(keyword).upper())
+    cached = cache_get(key)
+    if cached:
+        cached["cached"] = True
+        return cached
+
+    calls = len(NEG_SOURCES) * len(NEG_QUERIES)
+    if not upstream_allowed(calls):
+        raise RuntimeError("오늘 조회 한도를 모두 썼습니다. 내일 다시 이용해 주세요.")
+
+    docs, seen, totals, dropped, failed = [], set(), {}, 0, []
+    for source, label in NEG_SOURCES:
+        for query_tpl, sort in NEG_QUERIES:
+            query = query_tpl.format(kw=keyword)
+            try:
+                found, total = search_docs(source, query, display=100, sort=sort)
+            except requests.RequestException:
+                failed.append(label)
+                continue
+            if query_tpl == "{kw}" and sort == "date":
+                totals[label] = total
+            for d in found:
+                link = d["link"]
+                if not link or link in seen:
+                    continue
+                seen.add(link)
+                if not neg_relevant(d, keyword):
+                    dropped += 1
+                    continue
+                d["source"] = label
+                d["score"], d["hits"] = neg_score(d)
+                docs.append(d)
+
+    if not docs:
+        return None
+
+    # 점수 높은 글이 AI 상한 안에 먼저 들어가게 정렬
+    docs.sort(key=lambda d: (d["score"], d["date"]), reverse=True)
+
+    ai_used, ai_error, tokens = False, None, {}
+    if use_ai and os.getenv("ANTHROPIC_API_KEY"):
+        target = docs[:NEG_AI_MAX]
+        try:
+            verdicts, tokens = ai_judge_negative(keyword, target)
+            ai_used = verdicts is not None
+        except RuntimeError as exc:
+            verdicts, ai_error = None, str(exc)
+        except requests.RequestException:
+            verdicts, ai_error = None, "AI 서버와 통신하지 못했습니다. 표현 기준으로만 골랐습니다."
+        if verdicts is not None:
+            for i, d in enumerate(target):
+                v = verdicts.get(i)
+                if v:
+                    d.update(v)
+
+    order = {"강": 0, "중": 1, "약": 2}
+    if ai_used:
+        negatives = [d for d in docs if d.get("level")]
+    else:
+        # AI 없이: 점수 3 이상만 (약한 신호 하나만 걸린 글은 뺀다)
+        negatives = [d for d in docs if d["score"] >= 3]
+        for d in negatives:
+            d["level"] = "강" if d["score"] >= 8 else ("중" if d["score"] >= 5 else "약")
+    negatives.sort(key=lambda d: (order.get(d["level"], 3), -int(d["date"] or 0), -d["score"]))
+
+    by_source = {}
+    for d in negatives:
+        by_source[d["source"]] = by_source.get(d["source"], 0) + 1
+
+    result = {
+        "keyword": keyword,
+        "checked": len(docs),
+        "ai_checked": min(len(docs), NEG_AI_MAX) if ai_used else 0,
+        "dropped": dropped,
+        "totals": totals,
+        "failed": sorted(set(failed)),
+        "ai": ai_used,
+        "ai_error": ai_error,
+        "tokens": tokens,
+        "by_source": by_source,
+        "posts": [{k: d.get(k, "") for k in
+                   ("source", "title", "text", "link", "date", "where", "level",
+                    "reason", "target", "hits", "score")} for d in negatives[:200]],
+        "fetched_at": time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600)),
+        "cached": False,
+    }
+    if not ai_error:            # AI 가 실패한 결과는 캐시하지 않는다 — 다음에 다시 시도
+        cache_put(key, result)
+    return result
+
+
 # ------------------------------------------------------------------ 라우트
 
 # ------------------------------------------------------------------ 접근 제한
@@ -728,6 +954,11 @@ def api_login():
 @app.get("/")
 def index():
     return send_from_directory(BASE_DIR, "index.html")
+
+
+@app.get("/neg")
+def neg_page():
+    return send_from_directory(BASE_DIR, "neg.html")
 
 
 @app.get("/healthz")
@@ -863,6 +1094,33 @@ def api_unmet():
                 cache_put(ai_key, reviewed)
                 result["ai"] = reviewed
 
+    return jsonify(result)
+
+
+@app.post("/api/negative")
+def api_negative():
+    if not check_access():
+        return jsonify({"error": "비밀번호가 필요합니다.", "auth": True}), 401
+    if not all(datalab_credentials()):
+        return jsonify({"error": "검색 API가 아직 설정되지 않았습니다. 운영자에게 알려주세요."}), 503
+    if rate_limited(client_ip()):
+        return jsonify({"error": "잠시 뒤에 다시 시도해 주세요. 짧은 시간에 너무 많이 요청했습니다."}), 429
+
+    body = request.get_json(silent=True) or {}
+    keyword = str(body.get("keyword", "")).strip()[:MAX_KEYWORD_LEN]
+    if not keyword:
+        return jsonify({"error": "키워드를 입력해 주세요."}), 400
+
+    try:
+        result = collect_negative(keyword, bool(body.get("ai")))
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 429
+    except requests.RequestException:
+        return jsonify({"error": "네이버 서버와 통신하지 못했습니다. 잠시 뒤 다시 시도해 주세요."}), 502
+
+    if not result:
+        return jsonify({"error": "'{}'가 들어간 글을 찾지 못했습니다. 철자나 띄어쓰기를 바꿔 보세요."
+                        .format(keyword)}), 404
     return jsonify(result)
 
 

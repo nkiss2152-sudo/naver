@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>부정글 찾기</title>
+<meta name="description" content="네이버 블로그·카페·지식iN에서 부정글을 찾아 URL을 모으고 삭제요청 상태를 관리합니다.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/400.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.0.8/600.css">
+<style>
+:root{
+  --paper:#F6F6F3; --card:#FFF; --ink:#15171B; --muted:#71757E; --line:#E4E4DE;
+  --pc:#3B5BDB; --ok:#0F7B4F; --warn:#B4442B; --mid:#D9822B; --low:#C9A646;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:48px 20px 96px}
+.eyebrow{font-size:11px;letter-spacing:.18em;color:var(--muted);font-weight:600;margin:0 0 14px}
+h1{font-size:clamp(26px,6vw,38px);line-height:1.15;letter-spacing:-.03em;margin:0 0 10px;font-weight:800}
+.sub{color:var(--muted);font-size:15px;margin:0 0 24px;line-height:1.65}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:24px}
+.tab{padding:11px 18px;font-size:15px;font-weight:600;font-family:inherit;background:none;border:0;
+  border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;margin-bottom:-1px}
+.tab.on{color:var(--ink);border-bottom-color:var(--ink)}
+.tab .c{font-family:var(--mono);font-weight:400;font-size:13px;margin-left:4px}
+.panel{display:none}.panel.on{display:block}
+.bar{display:flex;gap:8px;flex-wrap:wrap}
+input[type=text],input[type=password]{padding:13px 15px;font-size:16px;font-family:inherit;color:var(--ink);
+  background:var(--card);border:1.5px solid var(--line);border-radius:9px;max-width:100%}
+input:focus{outline:none;border-color:var(--pc);box-shadow:0 0 0 3px rgba(59,91,219,.14)}
+.bar input{flex:1 1 260px;min-width:0}
+button.go{padding:13px 24px;font-size:15px;font-weight:700;font-family:inherit;color:#fff;background:var(--ink);
+  border:0;border-radius:9px;cursor:pointer}
+button.go:disabled{opacity:.4;cursor:default}
+button.ghost{padding:8px 13px;font-size:13px;font-weight:600;font-family:inherit;color:var(--ink);
+  background:var(--card);border:1.5px solid var(--line);border-radius:8px;cursor:pointer}
+button.ghost:hover{border-color:var(--ink)}
+button.ghost:disabled{opacity:.4;cursor:default}
+:focus-visible{outline:2px solid var(--pc);outline-offset:2px}
+.opts{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:14px;color:var(--muted)}
+.opts input{accent-color:var(--pc);width:15px;height:15px}
+.state{padding:32px 0;color:var(--muted);font-size:15px;line-height:1.7}
+.state.error{color:var(--warn)}
+.note{font-size:13px;color:var(--muted);line-height:1.7;margin:8px 0 0}
+
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:24px 0 8px}
+.sum > div{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:var(--card)}
+.sum .lbl{font-size:11px;color:var(--muted)}
+.sum .val{font-family:var(--mono);font-size:19px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+.sum .val.bad{color:var(--warn)}
+
+.fil{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 0;align-items:center}
+.fil .lb{font-size:12px;color:var(--muted);margin-right:2px;width:34px}
+.chip{padding:5px 11px;font-size:13px;font-weight:600;font-family:inherit;border-radius:20px;cursor:pointer;
+  border:1.5px solid var(--line);background:var(--card);color:var(--muted)}
+.chip.on{border-color:var(--ink);color:var(--ink)}
+.chip .c{font-family:var(--mono);font-weight:400;margin-left:4px}
+
+.tool{position:sticky;top:0;z-index:4;display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+  background:var(--paper);padding:12px 0;margin:10px 0 4px;border-bottom:1px solid var(--line)}
+.tool .sel{font-size:13px;color:var(--muted);margin-right:auto;display:flex;align-items:center;gap:8px}
+.tool .sel input{accent-color:var(--ink);width:16px;height:16px}
+
+.post{display:grid;grid-template-columns:22px 1fr;gap:4px 10px;border:1px solid var(--line);
+  border-left:4px solid var(--line);border-radius:9px;padding:13px 15px;margin-top:8px;background:var(--card)}
+.post.l-강{border-left-color:var(--warn)}.post.l-중{border-left-color:var(--mid)}.post.l-약{border-left-color:var(--low)}
+.post.done{opacity:.55}
+.post > input{accent-color:var(--ink);width:16px;height:16px;margin-top:3px}
+.top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.lv{display:inline-block;padding:1px 7px;border-radius:5px;font-weight:700;font-size:11px;color:#fff}
+.lv.l-강{background:var(--warn)}.lv.l-중{background:var(--mid)}.lv.l-약{background:var(--low)}
+.st{display:inline-block;padding:1px 7px;border-radius:5px;font-weight:700;font-size:11px;border:1px solid}
+.st.s-요청함{color:var(--pc);border-color:#C7D2F5;background:#EEF1FB}
+.st.s-삭제됨{color:var(--ok);border-color:#C3E3D3;background:#E8F4EE}
+.st.s-거절됨{color:var(--muted);border-color:var(--line);background:var(--paper)}
+a.t{display:block;font-size:15px;font-weight:600;color:var(--ink);text-decoration:none;margin:6px 0 4px;line-height:1.45;word-break:break-all}
+a.t:hover{color:var(--pc)}
+.ex{font-size:13px;color:var(--muted);line-height:1.6;word-break:break-all}
+.why{font-size:13px;margin-top:6px;color:var(--warn)}
+.url{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.url code{font-family:var(--mono);font-size:12px;color:var(--ink);background:var(--paper);border:1px solid var(--line);
+  border-radius:6px;padding:4px 8px;word-break:break-all;flex:1 1 260px;min-width:0}
+.acts{display:flex;gap:4px;flex-wrap:wrap}
+.acts button{padding:4px 9px;font-size:12px;font-weight:600;font-family:inherit;border-radius:6px;cursor:pointer;
+  border:1px solid var(--line);background:var(--card);color:var(--muted)}
+.acts button:hover{border-color:var(--ink);color:var(--ink)}
+.acts button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+mark{background:#FBE3DC;color:inherit;border-radius:2px;padding:0 1px}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--ink);color:#fff;
+  padding:10px 16px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
+.toast.on{opacity:1}
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.7}
+footer a{color:var(--muted)}
+
+.lock{position:fixed;inset:0;background:var(--paper);z-index:50;display:none;align-items:center;justify-content:center;padding:20px}
+.lock.on{display:flex}
+.lock .box{max-width:340px;width:100%}
+.lock h2{font-size:20px;margin:0 0 6px}
+.lock p{font-size:14px;color:var(--muted);margin:0 0 18px}
+.lock .row{display:flex;gap:8px}
+.lock input{flex:1;min-width:0}
+.lock .err{color:var(--warn);font-size:13px;margin-top:10px;display:none}
+.lock .err.on{display:block}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="lock" id="lock"><div class="box">
+  <h2>사내 전용</h2>
+  <p>이용하려면 비밀번호를 입력하세요.</p>
+  <div class="row">
+    <input type="password" id="pw" placeholder="비밀번호" autocomplete="current-password">
+    <button class="go" id="pwgo">확인</button>
+  </div>
+  <p class="err" id="pwerr">비밀번호가 맞지 않습니다.</p>
+</div></div>
+
+<div class="wrap">
+  <p class="eyebrow">네이버 블로그 · 카페 · 지식iN</p>
+  <h1>부정글 찾기</h1>
+  <p class="sub">브랜드·제품·매장 이름을 넣으면 부정적인 글만 골라 URL을 모읍니다.
+    고른 URL을 복사해 삭제요청에 붙여넣고, 요청 상태를 표시해 관리하세요.</p>
+
+  <div class="tabs">
+    <button class="tab on" data-p="find">찾기</button>
+    <button class="tab" data-p="track">요청 관리<span class="c" id="trackc"></span></button>
+  </div>
+
+  <!-- ── 찾기 ── -->
+  <div class="panel on" id="p-find">
+    <div class="bar">
+      <input type="text" id="kw" placeholder="예: 명퉤, 코드니처 하수구" maxlength="30" autocomplete="off">
+      <button class="go" id="go">부정글 찾기</button>
+    </div>
+    <label class="opts"><input type="checkbox" id="ai" checked>
+      AI가 한 글씩 읽고 진짜 부정글만 고르기 <span style="font-size:12px">(조회당 최대 150원 안팎)</span></label>
+    <div id="out"></div>
+  </div>
+
+  <!-- ── 요청 관리 ── -->
+  <div class="panel" id="p-track">
+    <p class="note" style="margin:0 0 4px">요청함·삭제됨·거절됨으로 표시한 글이 여기 모입니다. 검색어와 상관없이 전부 보입니다.</p>
+    <div id="tout"></div>
+  </div>
+
+  <footer>
+    네이버가 주는 글 요약(앞부분 약 200자)만 보고 판정합니다. 본문 뒷부분·댓글의 불만은 놓칠 수 있고, 작성일은 블로그만 나옵니다.
+    요청 상태는 <b>이 브라우저에만</b> 저장됩니다 — 다른 PC에서는 보이지 않으니 CSV로 받아두세요.
+    삭제요청은 <a href="https://right.naver.com/" target="_blank" rel="noopener">네이버 권리보호센터</a>에서 합니다.
+    단순 불만 후기는 받아들여지지 않을 수 있습니다.
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n||0).toLocaleString('ko-KR');
+const fdate = s => s && s.length === 8 ? s.slice(0,4)+'.'+s.slice(4,6)+'.'+s.slice(6) : '';
+const today = () => { const d = new Date(); return d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0'); };
+function toast(msg){ const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('on'), 1800); }
+function mark(text, words){
+  let h = esc(text);
+  (words||[]).forEach(w => { const e = esc(w); if(e) h = h.split(e).join('<mark>'+e+'</mark>'); });
+  return h;
+}
+
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + t.dataset.p));
+  picked.clear();
+  if(t.dataset.p === 'track') renderTrack(); else if(NEG) render();
+}));
+
+/* ───── 요청 상태 저장 (이 브라우저) ───── */
+const SKEY = 'neg-status-v1';
+const STATES = ['요청함','삭제됨','거절됨'];
+function loadS(){ try{ return JSON.parse(localStorage.getItem(SKEY)) || {}; }catch(e){ return {}; } }
+function saveS(m){ try{ localStorage.setItem(SKEY, JSON.stringify(m)); }catch(e){} updateCount(); }
+function setStatus(post, s, kw){
+  const m = loadS();
+  if(!s){ delete m[post.link]; }
+  else m[post.link] = {s, d: today(), title: post.title, source: post.source, level: post.level,
+                       reason: post.reason || '', kw: kw || (m[post.link]||{}).kw || '', date: post.date || ''};
+  saveS(m);
+}
+function updateCount(){ const n = Object.keys(loadS()).length; $('trackc').textContent = n ? n : ''; }
+updateCount();
+
+async function copy(text, msg){
+  try{ await navigator.clipboard.writeText(text); }
+  catch(e){
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast(msg);
+}
+function csv(rows, name){
+  const q = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+  const blob = new Blob(['﻿' + rows.map(r => r.map(q).join(',')).join('\r\n')], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/* ───── 글 카드 ───── */
+function card(p, i, checked){
+  const st = (loadS()[p.link]||{}).s || '';
+  return '<div class="post l-'+esc(p.level)+(st==='삭제됨'?' done':'')+'">'
+    + '<input type="checkbox" class="pick" data-i="'+i+'"'+(checked?' checked':'')+' aria-label="선택">'
+    + '<div><div class="top">'
+    + '<span class="lv l-'+esc(p.level)+'">'+esc(p.level)+'</span>'
+    + (st ? '<span class="st s-'+esc(st)+'">'+esc(st)+'</span>' : '')
+    + '<span>'+esc(p.source)+'</span>'
+    + (p.where ? '<span>'+esc(p.where)+'</span>' : '')
+    + (p.date ? '<span>'+fdate(p.date)+'</span>' : '')
+    + (p.target ? '<span>· '+esc(p.target)+'</span>' : '')
+    + '</div>'
+    + '<a class="t" href="'+esc(p.link)+'" target="_blank" rel="noopener">'+mark(p.title, p.hits)+'</a>'
+    + (p.text ? '<div class="ex">'+mark(p.text, p.hits)+'</div>' : '')
+    + (p.reason ? '<div class="why">'+esc(p.reason)+'</div>' : '')
+    + '<div class="url"><code>'+esc(p.link)+'</code><div class="acts">'
+    + '<button data-act="copy" data-i="'+i+'">URL 복사</button>'
+    + STATES.map(s => '<button data-act="st" data-s="'+s+'" data-i="'+i+'"'+(st===s?' class="on"':'')+'>'+s+'</button>').join('')
+    + '</div></div></div></div>';
+}
+
+/* ───── 찾기 ───── */
+let NEG = null, fsrc = '전체', flv = '전체', fst = '요청 전', picked = new Set(), shown = [];
+
+function state(msg, err){ $('out').innerHTML = '<p class="state'+(err?' error':'')+'">'+esc(msg)+'</p>'; }
+
+function render(){
+  const d = NEG, S = loadS();
+  const stOf = p => (S[p.link]||{}).s || '요청 전';
+  shown = d.posts.filter(p => (fsrc === '전체' || p.source === fsrc)
+                           && (flv === '전체' || p.level === flv)
+                           && (fst === '전체' || stOf(p) === fst));
+  const cnt = f => d.posts.filter(f).length;
+  const pct = d.checked ? Math.round(d.posts.length / d.checked * 100) : 0;
+  const t = d.tokens || {};
+  const won = ((t.in||0)/1e6*1 + (t.out||0)/1e6*5) * 1400;
+  const chip = (g, cur, v, label, n) => '<button class="chip'+(cur===v?' on':'')+'" data-g="'+g+'" data-v="'+esc(v)+'">'
+    + esc(label) + (n !== undefined ? '<span class="c">'+n+'</span>' : '') + '</button>';
+
+  $('out').innerHTML =
+    '<div class="sum">'
+    + '<div><div class="lbl">읽은 글</div><div class="val">'+fmt(d.checked)+'</div></div>'
+    + '<div><div class="lbl">부정글</div><div class="val bad">'+fmt(d.posts.length)+'</div></div>'
+    + '<div><div class="lbl">부정 비율</div><div class="val">'+pct+'%</div></div>'
+    + '<div><div class="lbl">아직 요청 안 함</div><div class="val bad">'+cnt(p => stOf(p) === '요청 전')+'</div></div>'
+    + '</div>'
+    + '<p class="note">'
+    + (d.ai ? 'AI가 글 '+fmt(d.ai_checked)+'개를 읽고 판정했습니다.' : '부정 표현으로만 골랐습니다 (AI 미사용 — 칭찬글이 섞일 수 있음).')
+    + (d.dropped ? ' 이름이 안 들어간 글 '+fmt(d.dropped)+'개는 뺐습니다.' : '')
+    + ' 조회 '+esc(d.fetched_at)+(d.cached ? ' (6시간 내 같은 조회라 저장된 결과)' : '')
+    + (d.ai && won ? ' · 비용 약 '+won.toFixed(0)+'원' : '') + '</p>'
+    + (d.ai_error ? '<p class="state error" style="padding:8px 0 0">'+esc(d.ai_error)+'</p>' : '')
+    + (d.failed && d.failed.length ? '<p class="state error" style="padding:8px 0 0">'+esc(d.failed.join(', '))+' 일부를 못 가져왔습니다.</p>' : '')
+    + '<div class="fil"><span class="lb">상태</span>'
+    + ['요청 전','요청함','삭제됨','거절됨','전체'].map(s => chip('st', fst, s, s, s==='전체'?d.posts.length:cnt(p => stOf(p)===s))).join('') + '</div>'
+    + '<div class="fil"><span class="lb">출처</span>'
+    + ['전체','블로그','카페','지식iN'].map(s => chip('s', fsrc, s, s, s==='전체'?undefined:(d.by_source[s]||0))).join('') + '</div>'
+    + '<div class="fil"><span class="lb">강도</span>'
+    + ['전체','강','중','약'].map(l => chip('l', flv, l, l, l==='전체'?undefined:cnt(p => p.level===l))).join('') + '</div>'
+    + toolbar(shown.length)
+    + (shown.length ? shown.map((p, i) => card(p, i, picked.has(p.link))).join('')
+        : '<p class="state">'+(d.posts.length ? '이 조건에 맞는 글이 없습니다.' : '부정글을 찾지 못했습니다.')+'</p>');
+
+  bindCards($('out'), shown, render, d.keyword);
+  $('out').querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => {
+    const v = b.dataset.v;
+    if(b.dataset.g === 's') fsrc = v; else if(b.dataset.g === 'l') flv = v; else fst = v;
+    picked.clear(); render();
+  }));
+}
+
+function toolbar(n){
+  if(!n) return '';
+  return '<div class="tool"><label class="sel"><input type="checkbox" class="all"'
+    + (n && shown.every(p => picked.has(p.link)) ? ' checked' : '') + '> 전체 선택 '
+    + '<span class="pn">'+picked.size+'개 선택</span></label>'
+    + '<button class="ghost" data-bulk="copy">선택 URL 복사</button>'
+    + '<button class="ghost" data-bulk="요청함">선택 → 요청함</button>'
+    + '<button class="ghost" data-bulk="csv">CSV 받기</button></div>';
+}
+
+function bindCards(root, list, rerender, kw){
+  root.querySelectorAll('.pick').forEach(c => c.addEventListener('change', () => {
+    const p = list[Number(c.dataset.i)];
+    c.checked ? picked.add(p.link) : picked.delete(p.link);
+    const pn = root.querySelector('.pn'); if(pn) pn.textContent = picked.size + '개 선택';
+    const all = root.querySelector('.all'); if(all) all.checked = list.every(x => picked.has(x.link));
+  }));
+  const all = root.querySelector('.all');
+  if(all) all.addEventListener('change', () => {
+    list.forEach(p => all.checked ? picked.add(p.link) : picked.delete(p.link)); rerender();
+  });
+  root.querySelectorAll('.acts button').forEach(b => b.addEventListener('click', () => {
+    const p = list[Number(b.dataset.i)];
+    if(b.dataset.act === 'copy') return copy(p.link, 'URL을 복사했습니다');
+    const cur = (loadS()[p.link]||{}).s;
+    setStatus(p, cur === b.dataset.s ? '' : b.dataset.s, kw);
+    rerender();
+  }));
+  root.querySelectorAll('[data-bulk]').forEach(b => b.addEventListener('click', () => {
+    const sel = list.filter(p => picked.has(p.link));
+    const act = b.dataset.bulk;
+    if(act === 'csv'){
+      const rows = (sel.length ? sel : list);
+      const S = loadS();
+      csv([['상태','요청일','강도','출처','작성일','이유','제목','URL']]
+        .concat(rows.map(p => [(S[p.link]||{}).s || '요청 전', (S[p.link]||{}).d || '', p.level, p.source,
+                               fdate(p.date), p.reason, p.title, p.link])),
+          '부정글_' + (kw || '요청관리') + '_' + today() + '.csv');
+      return;
+    }
+    if(!sel.length) return toast('먼저 글을 선택하세요');
+    if(act === 'copy') return copy(sel.map(p => p.link).join('\n'), sel.length + '개 URL을 복사했습니다');
+    sel.forEach(p => setStatus(p, act, kw));
+    picked.clear(); toast(sel.length + '개를 요청함으로 표시했습니다'); rerender();
+  }));
+}
+
+let busy = false;
+async function find(){
+  if(busy) return;
+  const kw = $('kw').value.trim();
+  if(!kw){ $('kw').focus(); return; }
+  busy = true; $('go').disabled = true; $('go').textContent = '찾는 중…';
+  state($('ai').checked ? '블로그·카페·지식iN에서 글을 모아 AI가 읽는 중입니다… (30초~1분)' : '글을 모으는 중입니다…');
+  try{
+    const d = await post('/api/negative', {keyword: kw, ai: $('ai').checked});
+    if(d.error) state(d.error, true);
+    else { NEG = d; fsrc = '전체'; flv = '전체'; fst = '요청 전'; picked.clear(); render(); }
+  }catch(e){ if(e.message !== 'auth') state('연결에 실패했습니다. 잠시 뒤 다시 시도해 주세요.', true); }
+  finally{ busy = false; $('go').disabled = false; $('go').textContent = '부정글 찾기'; }
+}
+$('go').addEventListener('click', find);
+$('kw').addEventListener('keydown', e => { if(e.key === 'Enter') find(); });
+
+/* ───── 요청 관리 ───── */
+let tst = '요청함';
+function renderTrack(){
+  const S = loadS();
+  const all = Object.keys(S).map(link => Object.assign({link}, S[link]))
+                .sort((a,b) => (b.d||'').localeCompare(a.d||''));
+  if(!all.length){ $('tout').innerHTML = '<p class="state">아직 표시한 글이 없습니다. 찾기 탭에서 글마다 [요청함]을 누르세요.</p>'; return; }
+  const list = all.filter(p => tst === '전체' || p.s === tst)
+                  .map(p => ({link:p.link, title:p.title, source:p.source, level:p.level||'중',
+                              reason:(p.kw ? '['+p.kw+'] ' : '') + (p.reason||'') + ' · '+p.s+' '+p.d, date:p.date}));
+  shown = list;
+  $('tout').innerHTML = '<div class="fil">'
+    + ['요청함','삭제됨','거절됨','전체'].map(s => '<button class="chip'+(tst===s?' on':'')+'" data-v="'+s+'">'+s
+        + '<span class="c">'+(s==='전체'?all.length:all.filter(p => p.s===s).length)+'</span></button>').join('')
+    + '</div>' + toolbar(list.length)
+    + (list.length ? list.map((p, i) => card(p, i, picked.has(p.link))).join('') : '<p class="state">해당하는 글이 없습니다.</p>');
+  bindCards($('tout'), list, renderTrack, '');
+  $('tout').querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { tst = b.dataset.v; picked.clear(); renderTrack(); }));
+}
+
+/* ───── 접근 제한 ───── */
+let PW = sessionStorage.getItem('pw') || '';
+function headers(){ const h = {'Content-Type':'application/json'}; if(PW) h['X-Access-Password'] = PW; return h; }
+async function post(url, body){
+  const res = await fetch(url, {method:'POST', headers: headers(), body: JSON.stringify(body)});
+  const d = await res.json();
+  if(res.status === 401 && d.auth){ showLock(); throw new Error('auth'); }
+  return d;
+}
+function showLock(){ $('lock').classList.add('on'); setTimeout(() => $('pw').focus(), 50); }
+async function unlock(){
+  const v = $('pw').value; if(!v) return;
+  $('pwgo').disabled = true;
+  try{
+    const res = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:v})});
+    if(res.ok){ PW = v; sessionStorage.setItem('pw', v); $('lock').classList.remove('on'); $('pwerr').classList.remove('on'); }
+    else { $('pwerr').classList.add('on'); $('pw').select(); }
+  }catch(e){ $('pwerr').classList.add('on'); }
+  finally{ $('pwgo').disabled = false; }
+}
+$('pwgo').addEventListener('click', unlock);
+$('pw').addEventListener('keydown', e => { if(e.key === 'Enter') unlock(); });
+(async () => { try{ const h = await fetch('/healthz').then(r => r.json()); if(h.locked && !PW) showLock(); }catch(e){} })();
+</script>
+</body>
+</html>

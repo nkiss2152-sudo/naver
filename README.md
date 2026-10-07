@@ -4,6 +4,12 @@
 
 **운영 중인 주소** — https://keyword-service-rcny.onrender.com (비밀번호 필요)
 
+**부정글 찾기** — https://keyword-service-rcny.onrender.com/neg (같은 비밀번호)
+
+브랜드·제품·매장 이름을 넣으면 블로그·카페·지식iN에서 부정글만 골라 URL을 모읍니다.
+선택한 URL을 한 번에 복사하고, 글마다 요청함·삭제됨·거절됨을 표시해 관리합니다(상태는 브라우저에 저장).
+같은 조회는 6시간 캐시(NEG_TTL).
+
 ---
 
 ## 무엇을 하는가
