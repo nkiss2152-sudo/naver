@@ -854,31 +854,37 @@ def neg_score(doc):
     return max(score, 0), hits[:8], raw
 
 
-def excerpt(doc, limit=520):
-    """AI 와 화면에 보여줄 글 조각. 본문이 있으면 부정 표현 주변을 잘라 붙인다."""
+def excerpt(doc, limit=900):
+    """AI 와 화면에 보여줄 글 조각.
+    본문이 있으면 [앞부분] + [강한 부정 표현 주변] + [끝부분]을 붙인다.
+    끝부분(결론)은 길이가 넘쳐도 절대 자르지 않는다."""
     body = doc.get("body", "")
     if not body:
         return doc["text"]
     flat = re.sub(r"\s*\n\s*", " / ", body)
+    if len(flat) <= limit:
+        return flat
+    head, tail = flat[:120], flat[-260:]
+    mid_start, mid_end = 120, len(flat) - 260
+    weight = dict(NEG_WORDS)
     spans = []
     for w in doc.get("hits", []):
-        for mm in re.finditer(re.escape(w), flat):
-            spans.append((max(0, mm.start() - 70), min(len(flat), mm.end() + 70)))
-    spans.sort()
-    merged = []
-    for s, e in spans:
-        if merged and s <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-        else:
-            merged.append((s, e))
-    head = flat[:110]
-    parts = [head] + ["…" + flat[s:e] + "…" for s, e in merged if s > 110]
-    # 결론은 보통 글 끝에 있다
-    tail = flat[-160:]
-    if len(flat) > 400 and tail not in " ".join(parts):
-        parts.append("…(끝부분) " + tail)
-    out = " ".join(parts)
-    return out[:limit]
+        for mm in re.finditer(re.escape(w), flat[mid_start:mid_end]):
+            s0 = mid_start + mm.start()
+            spans.append((-weight.get(w, 1), s0, max(mid_start, s0 - 60),
+                          min(mid_end, s0 + len(w) + 60)))
+    spans.sort()                                   # 무게 큰 표현부터
+    budget = limit - len(head) - len(tail) - 20
+    chosen = []
+    for _, _, s0, e0 in spans:
+        if any(s0 < e and e0 > s for s, e in chosen):
+            continue
+        if e0 - s0 + 4 > budget:
+            break
+        chosen.append((s0, e0))
+        budget -= e0 - s0 + 4
+    chosen.sort()
+    return " ".join([head] + ["…" + flat[s:e] + "…" for s, e in chosen] + ["…(끝부분) " + tail])
 
 
 def ai_judge_batch(keyword, chunk, offset, api_key):
@@ -1059,7 +1065,7 @@ def collect_negative(keyword, use_ai):
         else:
             stage = "판정 안 함"
         trail[d["key"]] = {"stage": stage, "title": d["title"], "full": bool(d.get("body")),
-                           "excerpt": d["excerpt"][:300], "hits": d["hits"]}
+                           "excerpt": d["excerpt"], "hits": d["hits"]}
 
     by_source = {}
     for d in negatives:
@@ -1126,13 +1132,14 @@ def check_one(keyword, url, use_ai):
     elif d["score"] >= 3:
         verdict = {"level": "강" if d["score"] >= 8 else ("중" if d["score"] >= 5 else "약"),
                    "reason": "", "target": ""}
-    head = "네이버 검색 결과 상위권(검색어당 100개)에 들어오지 않아 수집되지 않았던 글입니다. "
+    head = ("네이버 검색 결과 상위권(검색어당 100개)에 들어오지 않아 수집되지 않았던 글입니다. "
+            if cached else "아직 이 검색어로 [부정글 찾기]를 돌리지 않아 수집 여부는 모릅니다. ")
     if verdict:
         d.update(verdict)
         return {"stage": "수집 안 됨", "why": head + "직접 열어 읽어보니 부정글입니다.",
                 "post": public_post(d)}
     return {"stage": "수집 안 됨", "why": head + "직접 열어 읽어봤지만 부정글로 보이지 않습니다.",
-            "trail": {"excerpt": d["excerpt"][:300], "hits": d["hits"]}}
+            "trail": {"excerpt": d["excerpt"], "hits": d["hits"], "full": True}}
 
 
 # ------------------------------------------------------------------ 라우트
